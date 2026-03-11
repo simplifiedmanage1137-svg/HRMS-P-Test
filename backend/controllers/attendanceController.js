@@ -9,32 +9,32 @@ const generateSessionId = () => {
 // Helper function to parse time string (e.g., "3:00 PM" or "15:00")
 const parseTimeString = (timeStr) => {
     if (!timeStr) return null;
-    
+
     console.log('Parsing time string:', timeStr);
-    
+
     // Handle format like "3:00 PM - 12:00 AM"
     const parts = timeStr.split('-');
     let startTimeStr = timeStr;
     if (parts.length > 0) {
         startTimeStr = parts[0].trim();
     }
-    
+
     // Try to parse time
     let hour = 9, minute = 0;
-    
+
     // Check for AM/PM format (e.g., "3:00 PM")
     const ampmMatch = startTimeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
     if (ampmMatch) {
         hour = parseInt(ampmMatch[1]);
         minute = parseInt(ampmMatch[2]);
         const ampm = ampmMatch[3].toUpperCase();
-        
+
         if (ampm === 'PM' && hour !== 12) hour += 12;
         if (ampm === 'AM' && hour === 12) hour = 0;
-        
+
         return { hour, minute };
     }
-    
+
     // Check for 24-hour format (e.g., "15:00")
     const militaryMatch = startTimeStr.match(/(\d{1,2}):(\d{2})/);
     if (militaryMatch) {
@@ -42,11 +42,12 @@ const parseTimeString = (timeStr) => {
         minute = parseInt(militaryMatch[2]);
         return { hour, minute };
     }
-    
+
     return { hour, minute };
 };
 
 // Clock in
+
 exports.clockIn = async (req, res) => {
     try {
         console.log('='.repeat(70));
@@ -79,32 +80,35 @@ exports.clockIn = async (req, res) => {
 
         const emp = employee[0];
         const now = new Date();
-        const today = now.toISOString().split('T')[0];
+
+        // Get today's date in LOCAL timezone
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const today = `${year}-${month}-${day}`;
+
         const currentTimeStr = now.toTimeString().split(' ')[0];
         const sessionId = generateSessionId();
 
         console.log('Employee:', emp.first_name, emp.last_name);
-        console.log('Profile shift timing:', emp.shift_timing);
+        console.log('Today date (LOCAL):', today);
+        console.log('Clock in time:', now.toString());
 
         // Parse shift time from employee profile
         let shiftHour = 9, shiftMinute = 0;
         let shiftDisplay = emp.shift_timing || '9:00 AM';
-        
+
         if (emp.shift_timing) {
             const parsedTime = parseTimeString(emp.shift_timing);
             if (parsedTime) {
                 shiftHour = parsedTime.hour;
                 shiftMinute = parsedTime.minute;
-                console.log(`✅ Using shift from profile: ${shiftHour}:${shiftMinute.toString().padStart(2, '0')}`);
             }
         }
-        
+
         // Create shift start datetime for today
         const shiftStartTime = new Date(now);
         shiftStartTime.setHours(shiftHour, shiftMinute, 0, 0);
-        
-        console.log('Shift start time:', shiftStartTime.toLocaleString());
-        console.log('Clock in time:', now.toLocaleString());
 
         // Calculate difference
         const diffMs = now - shiftStartTime;
@@ -113,114 +117,21 @@ exports.clockIn = async (req, res) => {
         const lateMinutes = isLate ? diffMs / (1000 * 60) : 0;
         const earlyMinutes = isEarly ? Math.abs(diffMs) / (1000 * 60) : 0;
 
-        console.log('Is late:', isLate, 'Is early:', isEarly);
-        console.log('Late minutes:', lateMinutes, 'Early minutes:', earlyMinutes);
-
-        // Check if attendance table exists and has required columns
-        try {
-            // First, check if attendance table exists
-            const [tables] = await db.query("SHOW TABLES LIKE 'attendance'");
-            if (tables.length === 0) {
-                console.log('⚠️ Attendance table does not exist, creating it...');
-                
-                // Create attendance table
-                await db.query(`
-                    CREATE TABLE attendance (
-                        id INT PRIMARY KEY AUTO_INCREMENT,
-                        employee_id VARCHAR(20) NOT NULL,
-                        attendance_date DATE NOT NULL,
-                        clock_in DATETIME,
-                        clock_out DATETIME,
-                        total_hours DECIMAL(5,2) DEFAULT 0,
-                        status ENUM('present', 'half_day', 'absent', 'holiday') DEFAULT 'absent',
-                        late_minutes DECIMAL(8,3) DEFAULT 0,
-                        early_minutes DECIMAL(8,3) DEFAULT 0,
-                        latitude DECIMAL(10,8),
-                        longitude DECIMAL(11,8),
-                        location_accuracy DECIMAL(5,2),
-                        shift_time_used VARCHAR(50),
-                        session_id VARCHAR(100),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE KEY unique_employee_date (employee_id, attendance_date)
-                    )
-                `);
-                console.log('✅ Attendance table created');
-            }
-
-            // Check if attendance_sessions table exists
-            const [sessionsTables] = await db.query("SHOW TABLES LIKE 'attendance_sessions'");
-            if (sessionsTables.length === 0) {
-                console.log('⚠️ Attendance sessions table does not exist, creating it...');
-                
-                await db.query(`
-                    CREATE TABLE attendance_sessions (
-                        id INT PRIMARY KEY AUTO_INCREMENT,
-                        employee_id VARCHAR(20) NOT NULL,
-                        session_id VARCHAR(100) NOT NULL,
-                        clock_in_time DATETIME NOT NULL,
-                        last_heartbeat DATETIME NOT NULL,
-                        clock_out_time DATETIME,
-                        is_active BOOLEAN DEFAULT TRUE,
-                        INDEX idx_session (session_id),
-                        INDEX idx_active (is_active)
-                    )
-                `);
-                console.log('✅ Attendance sessions table created');
-            }
-        } catch (tableError) {
-            console.error('Error checking/creating tables:', tableError);
-            // Continue anyway
-        }
-
-        // Check if already clocked in today
-        const [existing] = await db.query(
-            'SELECT * FROM attendance WHERE employee_id = ? AND attendance_date = ?',
-            [employee_id, today]
-        );
-
         const connection = await db.getConnection();
         await connection.beginTransaction();
 
         try {
-            if (existing.length > 0) {
-                if (existing[0].clock_in && !existing[0].clock_out) {
-                    await connection.rollback();
-                    connection.release();
-                    
-                    return res.status(400).json({
-                        success: false,
-                        message: 'Already clocked in today',
-                        clock_in: existing[0].clock_in
-                    });
-                }
+            // ALWAYS create a new attendance record for each clock-in
+            // This allows multiple sessions per day
+            await connection.query(
+                `INSERT INTO attendance 
+                 (employee_id, attendance_date, clock_in, late_minutes, early_minutes,
+                  latitude, longitude, location_accuracy, session_id, shift_time_used) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [employee_id, today, now, lateMinutes, earlyMinutes, latitude, longitude, accuracy, sessionId, shiftDisplay]
+            );
 
-                // Update existing record
-                await connection.query(
-                    `UPDATE attendance 
-                     SET clock_in = ?, 
-                         clock_out = NULL,
-                         late_minutes = ?,
-                         early_minutes = ?,
-                         latitude = ?,
-                         longitude = ?,
-                         location_accuracy = ?,
-                         session_id = ?,
-                         shift_time_used = ?
-                     WHERE employee_id = ? AND attendance_date = ?`,
-                    [now, lateMinutes, earlyMinutes, latitude, longitude, accuracy, sessionId, shiftDisplay, employee_id, today]
-                );
-            } else {
-                // Insert new record
-                await connection.query(
-                    `INSERT INTO attendance 
-                     (employee_id, attendance_date, clock_in, late_minutes, early_minutes,
-                      latitude, longitude, location_accuracy, session_id, shift_time_used) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [employee_id, today, now, lateMinutes, earlyMinutes, latitude, longitude, accuracy, sessionId, shiftDisplay]
-                );
-            }
-
-            // Create or update active session
+            // Create active session
             await connection.query(
                 `INSERT INTO attendance_sessions 
                  (employee_id, session_id, clock_in_time, last_heartbeat, is_active) 
@@ -242,7 +153,7 @@ exports.clockIn = async (req, res) => {
             if (isLate) {
                 status = 'Late';
                 const lateSeconds = Math.round(lateMinutes * 60);
-                
+
                 if (lateSeconds < 60) {
                     lateDisplay = `${lateSeconds} second${lateSeconds !== 1 ? 's' : ''}`;
                 } else {
@@ -254,7 +165,7 @@ exports.clockIn = async (req, res) => {
             } else if (isEarly) {
                 status = 'Early';
                 const earlySeconds = Math.round(earlyMinutes * 60);
-                
+
                 if (earlySeconds < 60) {
                     earlyDisplay = `${earlySeconds} second${earlySeconds !== 1 ? 's' : ''}`;
                 } else {
@@ -275,7 +186,8 @@ exports.clockIn = async (req, res) => {
                 is_late: isLate,
                 is_early: isEarly,
                 session_id: sessionId,
-                employee_name: `${emp.first_name} ${emp.last_name}`
+                employee_name: `${emp.first_name} ${emp.last_name}`,
+                attendance_date: today
             };
 
             if (isLate) {
@@ -287,7 +199,7 @@ exports.clockIn = async (req, res) => {
                 response.early_display = earlyDisplay;
             }
 
-            console.log('✅ Response:', response.message);
+            console.log('✅ Response:', response.message, 'for date:', today);
             res.json(response);
 
         } catch (error) {
@@ -298,45 +210,25 @@ exports.clockIn = async (req, res) => {
 
     } catch (error) {
         console.error('❌ Clock-in error:', error);
-        console.error('Error stack:', error.stack);
-        
-        // Check for specific database errors
-        if (error.code === 'ER_BAD_FIELD_ERROR') {
-            return res.status(500).json({
-                success: false,
-                message: 'Database column mismatch. Please run database migrations.',
-                error: error.message
-            });
-        }
-        
-        if (error.code === 'ER_NO_SUCH_TABLE') {
-            return res.status(500).json({
-                success: false,
-                message: 'Attendance tables not found. Please run database setup.',
-                error: error.message
-            });
-        }
-        
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             message: 'Failed to clock in',
             error: error.message
         });
     }
 };
 
-// attendanceController.js - Clock Out with better error handling
-
-// Clock out - FIXED with proper error messages
 exports.clockOut = async (req, res) => {
     try {
         console.log('='.repeat(70));
         console.log('📍 CLOCK-OUT REQUEST');
+        console.log('Time:', new Date().toISOString());
         console.log('Request body:', JSON.stringify(req.body, null, 2));
         console.log('='.repeat(70));
 
         const { employee_id, session_id, latitude, longitude, accuracy } = req.body;
 
+        // Validate required fields
         if (!employee_id) {
             return res.status(400).json({
                 success: false,
@@ -344,181 +236,276 @@ exports.clockOut = async (req, res) => {
             });
         }
 
+        if (!session_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Session ID is required. Please clock in first.'
+            });
+        }
+
         const now = new Date();
         const today = now.toISOString().split('T')[0];
 
-        // Start transaction
+        console.log(`🔍 Looking for active session: ${session_id} for employee: ${employee_id}`);
+
         const connection = await db.getConnection();
         await connection.beginTransaction();
 
         try {
-            // ============== FIND ANY INCOMPLETE ATTENDANCE ==============
-            // First check for any incomplete attendance (from any day)
-            const [incompleteAttendance] = await connection.query(
-                `SELECT * FROM attendance 
-                 WHERE employee_id = ? 
-                 AND clock_in IS NOT NULL 
-                 AND clock_out IS NULL 
-                 ORDER BY attendance_date ASC 
-                 LIMIT 1`,
-                [employee_id]
+            // 1. First, find the active session
+            const [activeSessions] = await connection.query(
+                `SELECT * FROM attendance_sessions 
+                 WHERE session_id = ? 
+                 AND employee_id = ? 
+                 AND is_active = true`,
+                [session_id, employee_id]
             );
 
-            let attendanceRecord = null;
-            let activeSession = null;
-            let attendanceDate = today;
+            console.log(`Found ${activeSessions.length} active sessions`);
 
-            // Case 1: Found incomplete attendance from previous day(s)
-            if (incompleteAttendance.length > 0) {
-                attendanceRecord = incompleteAttendance[0];
-                attendanceDate = attendanceRecord.attendance_date;
-                
-                console.log(`✅ Found incomplete attendance from ${attendanceDate}`);
-                
-                // Try to find associated session
-                if (attendanceRecord.session_id) {
-                    const [sessions] = await connection.query(
-                        'SELECT * FROM attendance_sessions WHERE session_id = ? AND is_active = true',
-                        [attendanceRecord.session_id]
-                    );
-                    if (sessions.length > 0) {
-                        activeSession = sessions[0];
-                    }
-                }
-            } else {
-                // Case 2: Check for today's active session
-                if (session_id) {
-                    const [sessions] = await connection.query(
-                        'SELECT * FROM attendance_sessions WHERE employee_id = ? AND session_id = ? AND is_active = true',
-                        [employee_id, session_id]
-                    );
-                    if (sessions.length > 0) {
-                        activeSession = sessions[0];
-                    }
-                }
-
-                if (!activeSession) {
-                    const [sessions] = await connection.query(
-                        'SELECT * FROM attendance_sessions WHERE employee_id = ? AND is_active = true ORDER BY clock_in_time DESC LIMIT 1',
-                        [employee_id]
-                    );
-                    if (sessions.length > 0) {
-                        activeSession = sessions[0];
-                    }
-                }
-
-                // If we have active session, get the attendance record
-                if (activeSession) {
-                    const sessionDate = new Date(activeSession.clock_in_time).toISOString().split('T')[0];
-                    const [attendance] = await connection.query(
-                        'SELECT * FROM attendance WHERE employee_id = ? AND attendance_date = ?',
-                        [employee_id, sessionDate]
-                    );
-                    if (attendance.length > 0) {
-                        attendanceRecord = attendance[0];
-                        attendanceDate = sessionDate;
-                    }
-                }
-            }
-
-            // If still no record found
-            if (!attendanceRecord) {
-                await connection.rollback();
-                connection.release();
-                
-                // Check if employee exists
-                const [employee] = await connection.query(
-                    'SELECT * FROM employees WHERE employee_id = ?',
+            if (activeSessions.length === 0) {
+                // Try to find by employee_id only as fallback
+                const [fallbackSessions] = await connection.query(
+                    `SELECT * FROM attendance_sessions 
+                     WHERE employee_id = ? 
+                     AND is_active = true 
+                     ORDER BY clock_in_time DESC 
+                     LIMIT 1`,
                     [employee_id]
                 );
-                
-                if (employee.length === 0) {
-                    return res.status(404).json({
+
+                if (fallbackSessions.length === 0) {
+                    await connection.rollback();
+                    connection.release();
+
+                    console.log('❌ No active session found for employee:', employee_id);
+
+                    return res.status(400).json({
                         success: false,
-                        message: 'Employee not found'
+                        message: 'No active clock-in session found. Please clock in first.',
+                        error_type: 'NO_ACTIVE_SESSION'
                     });
                 }
-                
-                return res.status(400).json({
-                    success: false,
-                    message: 'No active clock-in found. Please clock in first.',
-                    error_type: 'NO_ACTIVE_SESSION'
+
+                console.log('Using fallback session:', fallbackSessions[0].session_id);
+
+                // Use the fallback session
+                const session = fallbackSessions[0];
+
+                // Find attendance record for this session
+                const [attendanceRecords] = await connection.query(
+                    `SELECT * FROM attendance 
+                     WHERE employee_id = ? 
+                     AND session_id = ? 
+                     AND clock_in IS NOT NULL 
+                     AND clock_out IS NULL`,
+                    [employee_id, session.session_id]
+                );
+
+                if (attendanceRecords.length === 0) {
+                    await connection.rollback();
+                    connection.release();
+
+                    return res.status(400).json({
+                        success: false,
+                        message: 'No matching attendance record found for the active session.'
+                    });
+                }
+
+                // Calculate hours and update using the found session
+                const record = attendanceRecords[0];
+                const clockIn = new Date(record.clock_in);
+                const totalMs = now - clockIn;
+                const totalHours = totalMs / (1000 * 60 * 60);
+                const totalHoursRounded = Math.round(totalHours * 100) / 100;
+
+                // Determine status
+                let status = 'present';
+                if (totalHours < 4) {
+                    status = 'absent';
+                } else if (totalHours < 8) {
+                    status = 'half_day';
+                }
+
+                console.log(`📊 Hours worked: ${totalHoursRounded}, Status: ${status}`);
+
+                // Update attendance record
+                await connection.query(
+                    `UPDATE attendance 
+                     SET clock_out = ?,
+                         total_hours = ?,
+                         status = ?,
+                         latitude = COALESCE(?, latitude),
+                         longitude = COALESCE(?, longitude),
+                         location_accuracy = COALESCE(?, location_accuracy)
+                     WHERE id = ?`,
+                    [now, totalHoursRounded, status, latitude, longitude, accuracy, record.id]
+                );
+
+                // Deactivate session
+                await connection.query(
+                    `UPDATE attendance_sessions 
+                     SET is_active = false,
+                         clock_out_time = ?
+                     WHERE id = ?`,
+                    [now, session.id]
+                );
+
+                await connection.commit();
+                connection.release();
+
+                return res.json({
+                    success: true,
+                    message: `✅ Clocked out successfully. ${status === 'present' ? 'Full day' : status === 'half_day' ? 'Half day' : 'Absent'}`,
+                    clock_out: now,
+                    total_hours: totalHoursRounded,
+                    status,
+                    session_id: session.session_id
                 });
             }
 
-            console.log(`✅ Processing clock-out for attendance from ${attendanceDate}`);
+            // Use the primary session found
+            const session = activeSessions[0];
+            console.log('✅ Found active session:', session);
 
-            // Calculate total hours worked
-            const clockIn = new Date(attendanceRecord.clock_in);
-            const totalHours = (now - clockIn) / (1000 * 60 * 60);
-            const totalMinutes = Math.round((now - clockIn) / (1000 * 60));
+            // Find the corresponding attendance record
+            const [attendanceRecords] = await connection.query(
+                `SELECT * FROM attendance 
+                 WHERE employee_id = ? 
+                 AND session_id = ? 
+                 AND clock_in IS NOT NULL 
+                 AND clock_out IS NULL`,
+                [employee_id, session_id]
+            );
 
-            // Check if this is a next-day clock-out
-            const clockInDate = clockIn.toISOString().split('T')[0];
-            const isNextDay = clockInDate !== today;
+            if (attendanceRecords.length === 0) {
+                // Try without session_id filter as fallback
+                const [fallbackAttendance] = await connection.query(
+                    `SELECT * FROM attendance 
+                     WHERE employee_id = ? 
+                     AND DATE(clock_in) = DATE(?)
+                     AND clock_out IS NULL
+                     ORDER BY clock_in DESC
+                     LIMIT 1`,
+                    [employee_id, session.clock_in_time]
+                );
 
-            // Determine status based on total hours
+                if (fallbackAttendance.length === 0) {
+                    await connection.rollback();
+                    connection.release();
+
+                    return res.status(400).json({
+                        success: false,
+                        message: 'No matching attendance record found for this session.'
+                    });
+                }
+
+                const record = fallbackAttendance[0];
+
+                // Calculate hours
+                const clockIn = new Date(record.clock_in);
+                const totalMs = now - clockIn;
+                const totalHours = totalMs / (1000 * 60 * 60);
+                const totalHoursRounded = Math.round(totalHours * 100) / 100;
+
+                // Determine status
+                let status = 'present';
+                if (totalHours < 4) {
+                    status = 'absent';
+                } else if (totalHours < 8) {
+                    status = 'half_day';
+                }
+
+                console.log(`📊 Hours worked: ${totalHoursRounded}, Status: ${status}`);
+
+                // Update the record with session_id
+                await connection.query(
+                    `UPDATE attendance 
+                     SET clock_out = ?,
+                         total_hours = ?,
+                         status = ?,
+                         session_id = ?,
+                         latitude = COALESCE(?, latitude),
+                         longitude = COALESCE(?, longitude),
+                         location_accuracy = COALESCE(?, location_accuracy)
+                     WHERE id = ?`,
+                    [now, totalHoursRounded, status, session_id, latitude, longitude, accuracy, record.id]
+                );
+
+                // Deactivate session
+                await connection.query(
+                    `UPDATE attendance_sessions 
+                     SET is_active = false,
+                         clock_out_time = ?
+                     WHERE id = ?`,
+                    [now, session.id]
+                );
+
+                await connection.commit();
+                connection.release();
+
+                return res.json({
+                    success: true,
+                    message: `✅ Clocked out successfully. ${status === 'present' ? 'Full day' : status === 'half_day' ? 'Half day' : 'Absent'}`,
+                    clock_out: now,
+                    total_hours: totalHoursRounded,
+                    status,
+                    session_id
+                });
+            }
+
+            const record = attendanceRecords[0];
+
+            // Calculate hours
+            const clockIn = new Date(record.clock_in);
+            const totalMs = now - clockIn;
+            const totalHours = totalMs / (1000 * 60 * 60);
+            const totalHoursRounded = Math.round(totalHours * 100) / 100;
+
+            // Determine status
             let status = 'present';
             if (totalHours < 4) {
                 status = 'absent';
-            } else if (totalHours >= 4 && totalHours < 8) {
+            } else if (totalHours < 8) {
                 status = 'half_day';
             }
 
-            console.log(`📊 Total hours: ${totalHours.toFixed(2)} (from ${clockInDate} to ${today})`);
-            console.log(`📊 Status: ${status}`);
+            console.log(`📊 Hours worked: ${totalHoursRounded}, Status: ${status}`);
 
             // Update attendance record
             await connection.query(
                 `UPDATE attendance 
-                 SET clock_out = ?, 
+                 SET clock_out = ?,
                      total_hours = ?,
                      status = ?,
                      latitude = COALESCE(?, latitude),
                      longitude = COALESCE(?, longitude),
                      location_accuracy = COALESCE(?, location_accuracy)
                  WHERE id = ?`,
-                [now, totalHours.toFixed(2), status, latitude, longitude, accuracy, attendanceRecord.id]
+                [now, totalHoursRounded, status, latitude, longitude, accuracy, record.id]
             );
 
-            // Deactivate session if exists
-            if (activeSession) {
-                await connection.query(
-                    `UPDATE attendance_sessions 
-                     SET is_active = false, 
-                         clock_out_time = ?
-                     WHERE id = ?`,
-                    [now, activeSession.id]
-                );
-            }
+            // Deactivate session
+            await connection.query(
+                `UPDATE attendance_sessions 
+                 SET is_active = false,
+                     clock_out_time = ?
+                 WHERE id = ?`,
+                [now, session.id]
+            );
 
             await connection.commit();
             connection.release();
 
-            // Prepare response message
-            let statusMessage = '';
-            switch(status) {
-                case 'present':
-                    statusMessage = 'Full day present';
-                    break;
-                case 'half_day':
-                    statusMessage = 'Half day';
-                    break;
-                case 'absent':
-                    statusMessage = 'Marked as absent (insufficient hours)';
-                    break;
-            }
-
-            const dateMessage = isNextDay ? ` for ${clockInDate}` : '';
+            console.log('✅ Clock-out successful');
 
             res.json({
                 success: true,
-                message: `Clocked out successfully${dateMessage}. ${statusMessage}`,
+                message: `✅ Clocked out successfully. ${status === 'present' ? 'Full day' : status === 'half_day' ? 'Half day' : 'Absent'}`,
                 clock_out: now,
-                attendance_date: clockInDate,
-                total_hours: totalHours.toFixed(2),
-                status: status,
-                is_next_day: isNextDay
+                total_hours: totalHoursRounded,
+                status,
+                session_id
             });
 
         } catch (error) {
@@ -529,19 +516,26 @@ exports.clockOut = async (req, res) => {
 
     } catch (error) {
         console.error('❌ Clock-out error:', error);
-        res.status(500).json({ 
-            success: false, 
+        console.error('Error stack:', error.stack);
+
+        res.status(500).json({
+            success: false,
             message: 'Failed to clock out',
-            error: error.message
+            error: error.message,
+            error_type: 'SERVER_ERROR'
         });
     }
 };
 
-// Get today's attendance - FIXED
+// attendanceController.js - Add more detailed error logging
+
+// attendanceController.js - Fixed getTodayAttendance
 exports.getTodayAttendance = async (req, res) => {
     try {
         const { employee_id } = req.params;
         
+        console.log('📊 getTodayAttendance called with employee_id:', employee_id);
+
         if (!employee_id) {
             return res.status(400).json({
                 success: false,
@@ -549,131 +543,152 @@ exports.getTodayAttendance = async (req, res) => {
             });
         }
 
-        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+        // Format today as YYYY-MM-DD using LOCAL date
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${year}-${month}-${day}`;
 
-        console.log('📊 Getting attendance for:', employee_id, today);
+        console.log('📊 Today date:', todayStr);
 
         // First check if employee exists
+        console.log('📊 Checking if employee exists with ID:', employee_id);
         const [employee] = await db.query(
             'SELECT * FROM employees WHERE employee_id = ?',
             [employee_id]
         );
 
         if (employee.length === 0) {
+            console.log('❌ Employee not found:', employee_id);
             return res.status(404).json({
                 success: false,
                 message: 'Employee not found'
             });
         }
 
-        // Check for today's attendance
+        console.log('✅ Employee found:', employee[0].first_name, employee[0].last_name);
+
+        // Get today's attendance record
+        console.log('📊 Querying attendance for date:', todayStr);
         const [todayAttendance] = await db.query(
             `SELECT a.*, e.first_name, e.last_name, e.shift_timing 
              FROM attendance a
              JOIN employees e ON a.employee_id = e.employee_id
-             WHERE a.employee_id = ? AND a.attendance_date = ?`,
-            [employee_id, today]
-        );
-
-        // Check for any incomplete attendance from previous days
-        const [incompleteAttendance] = await db.query(
-            `SELECT a.*, e.first_name, e.last_name, e.shift_timing 
-             FROM attendance a
-             JOIN employees e ON a.employee_id = e.employee_id
-             WHERE a.employee_id = ? 
-             AND a.clock_in IS NOT NULL 
-             AND a.clock_out IS NULL
-             ORDER BY a.attendance_date DESC
+             WHERE a.employee_id = ? AND DATE(a.attendance_date) = ?
+             ORDER BY a.clock_in DESC
              LIMIT 1`,
-            [employee_id]
+            [employee_id, todayStr]
         );
 
+        console.log('📊 Today attendance records found:', todayAttendance.length);
+
+        // Get active session if any
+        console.log('📊 Checking for active session');
         const [activeSession] = await db.query(
             'SELECT * FROM attendance_sessions WHERE employee_id = ? AND is_active = true',
             [employee_id]
         );
+        
+        console.log('📊 Active session found:', activeSession.length > 0);
 
-        // Determine which attendance to show
+        // Format the attendance data if it exists
         let formattedAttendance = null;
-        let hasPreviousIncomplete = false;
-
-        if (incompleteAttendance.length > 0) {
-            // There's an incomplete attendance from previous day
-            formattedAttendance = { ...incompleteAttendance[0] };
-            hasPreviousIncomplete = true;
-            
-            // Calculate hours so far
-            const clockIn = new Date(formattedAttendance.clock_in);
-            const now = new Date();
-            const hoursSoFar = (now - clockIn) / (1000 * 60 * 60);
-            formattedAttendance.hours_so_far = hoursSoFar.toFixed(2);
-            formattedAttendance.is_previous_day = true;
-            
-            console.log(`⚠️ Found incomplete attendance from ${formattedAttendance.attendance_date}`);
-            
-        } else if (todayAttendance.length > 0) {
-            // Normal today's attendance
+        
+        if (todayAttendance.length > 0) {
             formattedAttendance = { ...todayAttendance[0] };
             
-            if (formattedAttendance.clock_out) {
-                const totalHours = parseFloat(formattedAttendance.total_hours) || 0;
-                
-                if (totalHours >= 8) {
-                    formattedAttendance.status = 'present';
-                } else if (totalHours >= 4 && totalHours < 8) {
-                    formattedAttendance.status = 'half_day';
-                } else if (totalHours > 0 && totalHours < 4) {
-                    formattedAttendance.status = 'absent';
+            // Convert attendance_date to YYYY-MM-DD string format if it's a Date object
+            if (formattedAttendance.attendance_date) {
+                // Check if it's a Date object and convert to string
+                if (formattedAttendance.attendance_date instanceof Date) {
+                    const d = formattedAttendance.attendance_date;
+                    const year = d.getFullYear();
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    formattedAttendance.attendance_date = `${year}-${month}-${day}`;
+                } 
+                // If it's a string that contains 'T', split it
+                else if (typeof formattedAttendance.attendance_date === 'string' && 
+                         formattedAttendance.attendance_date.includes('T')) {
+                    formattedAttendance.attendance_date = formattedAttendance.attendance_date.split('T')[0];
                 }
-            } else {
-                // Currently working
+            }
+            
+            // Calculate late display if applicable
+            if (formattedAttendance.late_minutes && formattedAttendance.late_minutes > 0) {
+                const lateSeconds = Math.round(formattedAttendance.late_minutes * 60);
+                formattedAttendance.late_display = lateSeconds < 60 ?
+                    `${lateSeconds}s` :
+                    `${Math.floor(lateSeconds / 60)}m ${lateSeconds % 60}s`;
+            }
+            
+            // Calculate current hours if working
+            if (formattedAttendance.clock_in && !formattedAttendance.clock_out) {
                 const clockIn = new Date(formattedAttendance.clock_in);
                 const now = new Date();
                 const currentHours = (now - clockIn) / (1000 * 60 * 60);
                 formattedAttendance.current_hours = currentHours.toFixed(2);
             }
             
-            // Calculate late display if applicable
-            if (formattedAttendance.late_minutes > 0) {
-                const lateSeconds = Math.round(formattedAttendance.late_minutes * 60);
-                formattedAttendance.late_display = lateSeconds < 60 ? 
-                    `${lateSeconds}s` : 
-                    `${Math.floor(lateSeconds / 60)}m ${lateSeconds % 60}s`;
-            }
+            console.log('📊 Today\'s attendance:', {
+                date: formattedAttendance.attendance_date,
+                clock_in: formattedAttendance.clock_in ? 'Yes' : 'No',
+                clock_out: formattedAttendance.clock_out ? 'Yes' : 'No'
+            });
         }
 
-        res.json({
+        const response = {
             success: true,
             attendance: formattedAttendance,
             active_session: activeSession[0] || null,
-            has_previous_incomplete: hasPreviousIncomplete,
-            message: hasPreviousIncomplete ? 
-                `You have an incomplete attendance from ${formattedAttendance?.attendance_date}. Please clock out.` : 
-                undefined
-        });
+            has_active_session: activeSession.length > 0,
+            today_date: todayStr
+        };
+
+        console.log('📊 Sending response for date:', todayStr);
+        res.json(response);
 
     } catch (error) {
-        console.error('❌ Error getting attendance:', error);
+        console.error('❌ Error in getTodayAttendance:', error);
+        console.error('❌ Error stack:', error.stack);
+        console.error('❌ Error message:', error.message);
+        console.error('❌ Error code:', error.code);
+        
         res.status(500).json({ 
             success: false, 
             message: 'Failed to get attendance',
-            error: error.message
+            error: error.message,
+            error_code: error.code
         });
     }
 };
 
-// Get attendance report for admin
-// Get attendance report with leave data
+// Fixed getAttendanceReport
 exports.getAttendanceReport = async (req, res) => {
     try {
         const { start, end, employee_id } = req.query;
         
+        console.log('📊 Getting attendance report from', start, 'to', end, 'for employee:', employee_id);
+        
+        // Validate required parameters
+        if (!start || !end) {
+            console.log('❌ Missing start or end date');
+            return res.status(400).json({
+                success: false,
+                message: 'Start and end dates are required'
+            });
+        }
+
+        // Log the query parameters
+        console.log('📊 Query params:', { start, end, employee_id });
+
         // Get attendance records
         let attendanceQuery = `
             SELECT a.*, e.first_name, e.last_name, e.department, e.shift_timing
             FROM attendance a
             JOIN employees e ON a.employee_id = e.employee_id
-            WHERE a.attendance_date BETWEEN ? AND ?
+            WHERE DATE(a.attendance_date) BETWEEN ? AND ?
         `;
         let params = [start, end];
 
@@ -684,7 +699,12 @@ exports.getAttendanceReport = async (req, res) => {
 
         attendanceQuery += ' ORDER BY a.attendance_date DESC, e.first_name';
 
+        console.log('📊 Executing query:', attendanceQuery);
+        console.log('📊 With params:', params);
+
         const [attendance] = await db.query(attendanceQuery, params);
+
+        console.log(`📊 Found ${attendance.length} attendance records`);
 
         // Get leave records for the same period
         let leaveQuery = `
@@ -705,40 +725,68 @@ exports.getAttendanceReport = async (req, res) => {
             leaveParams.push(employee_id);
         }
 
+        console.log('📊 Executing leave query');
         const [leaves] = await db.query(leaveQuery, leaveParams);
+
+        console.log(`📊 Found ${leaves.length} leave records`);
 
         // Combine attendance and leave data
         const combinedData = [];
-        const employeeMap = {};
-
-        // Process attendance records
+        
+        // Helper function to convert any date to YYYY-MM-DD string
+        const formatDateToString = (date) => {
+            if (!date) return null;
+            
+            if (date instanceof Date) {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+            
+            if (typeof date === 'string') {
+                if (date.includes('T')) {
+                    return date.split('T')[0];
+                }
+                return date;
+            }
+            
+            return String(date);
+        };
+        
+        // First, add all attendance records
         attendance.forEach(record => {
-            const key = `${record.employee_id}-${record.attendance_date}`;
-            employeeMap[key] = {
-                type: 'attendance',
-                ...record
-            };
+            // Format the date properly
+            const dateStr = formatDateToString(record.attendance_date);
+            
+            combinedData.push({
+                ...record,
+                attendance_date: dateStr,
+                type: 'attendance'
+            });
         });
 
-        // Process leave records and mark those days
+        // Then add leave records for days without attendance
         leaves.forEach(leave => {
             const startDate = new Date(leave.start_date);
             const endDate = new Date(leave.end_date);
             
             // For each day in the leave period
             for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-                const dateStr = d.toISOString().split('T')[0];
-                const key = `${leave.employee_id}-${dateStr}`;
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                const dateStr = `${year}-${month}-${day}`;
                 
-                // If there's an attendance record for this day, update its status
-                if (employeeMap[key]) {
-                    employeeMap[key].type = 'leave';
-                    employeeMap[key].leave_type = leave.leave_type;
-                    employeeMap[key].leave_reason = leave.reason;
-                    employeeMap[key].status = 'on_leave';
-                } else {
-                    // Create a new record for this leave day
-                    employeeMap[key] = {
+                // Check if this date already has an attendance record
+                const existingAttendance = attendance.some(a => {
+                    const aDate = formatDateToString(a.attendance_date);
+                    return aDate === dateStr;
+                });
+                
+                // If no attendance record for this date, add leave record
+                if (!existingAttendance) {
+                    combinedData.push({
                         type: 'leave',
                         employee_id: leave.employee_id,
                         first_name: leave.first_name,
@@ -750,15 +798,12 @@ exports.getAttendanceReport = async (req, res) => {
                         status: 'on_leave',
                         clock_in: null,
                         clock_out: null,
-                        total_hours: 0
-                    };
+                        total_hours: 0,
+                        late_minutes: 0,
+                        early_minutes: 0
+                    });
                 }
             }
-        });
-
-        // Convert map to array
-        Object.values(employeeMap).forEach(record => {
-            combinedData.push(record);
         });
 
         // Calculate statistics
@@ -768,15 +813,15 @@ exports.getAttendanceReport = async (req, res) => {
             half_day: combinedData.filter(a => a.status === 'half_day').length,
             absent: combinedData.filter(a => a.status === 'absent').length,
             on_leave: combinedData.filter(a => a.status === 'on_leave').length,
-            late: combinedData.filter(a => parseFloat(a.late_minutes) > 0).length,
-            early: combinedData.filter(a => parseFloat(a.early_minutes) > 0).length
+            late: combinedData.filter(a => parseFloat(a.late_minutes || 0) > 0).length,
+            early: combinedData.filter(a => parseFloat(a.early_minutes || 0) > 0).length
         };
 
         // Add formatted display to each record
         const combinedWithDetails = combinedData.map(record => {
             const recordWithDetails = { ...record };
             
-            if (record.late_minutes > 0) {
+            if (record.late_minutes && record.late_minutes > 0) {
                 const totalSeconds = Math.round(record.late_minutes * 60);
                 if (totalSeconds < 60) {
                     recordWithDetails.late_text = `${totalSeconds}s`;
@@ -787,7 +832,7 @@ exports.getAttendanceReport = async (req, res) => {
                 }
             }
             
-            if (record.early_minutes > 0) {
+            if (record.early_minutes && record.early_minutes > 0) {
                 const totalSeconds = Math.round(record.early_minutes * 60);
                 if (totalSeconds < 60) {
                     recordWithDetails.early_text = `${totalSeconds}s`;
@@ -801,6 +846,8 @@ exports.getAttendanceReport = async (req, res) => {
             return recordWithDetails;
         });
 
+        console.log(`📊 Returning ${combinedWithDetails.length} records`);
+        
         res.json({
             success: true,
             stats,
@@ -808,11 +855,16 @@ exports.getAttendanceReport = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error in getAttendanceReport:', error);
+        console.error('❌ Error in getAttendanceReport:', error);
+        console.error('❌ Error stack:', error.stack);
+        console.error('❌ Error message:', error.message);
+        console.error('❌ Error code:', error.code);
+        
         res.status(500).json({ 
             success: false, 
             message: 'Failed to get attendance report',
-            error: error.message 
+            error: error.message,
+            error_code: error.code
         });
     }
 };
@@ -849,7 +901,7 @@ exports.checkActiveSessions = async () => {
         );
 
         console.log(`📊 Active sessions: ${activeSessions[0].count}`);
-        
+
         // Optional: Send alerts for sessions inactive for too long
         const timeoutMinutes = 60; // Alert after 60 minutes of no heartbeat
         const [inactiveSessions] = await db.query(
@@ -861,15 +913,15 @@ exports.checkActiveSessions = async () => {
 
         for (const session of inactiveSessions) {
             console.log(`⚠️ Session ${session.session_id} for employee ${session.employee_id} has been inactive for ${timeoutMinutes}+ minutes`);
-            
+
             // You could send a notification to admin here
             // But DO NOT auto clock-out
         }
 
-        return { 
-            success: true, 
+        return {
+            success: true,
             active: activeSessions[0].count,
-            inactive: inactiveSessions.length 
+            inactive: inactiveSessions.length
         };
 
     } catch (error) {
@@ -883,7 +935,7 @@ exports.markAbsentAtDayEnd = async () => {
     try {
         const today = new Date().toISOString().split('T')[0];
         const now = new Date();
-        
+
         console.log('📝 Running end-of-day absent marking for:', today);
 
         // Get all employees
@@ -908,7 +960,7 @@ exports.markAbsentAtDayEnd = async () => {
                 );
                 markedCount++;
                 console.log(`✅ Marked absent for employee ${emp.employee_id}`);
-            } 
+            }
             // If record exists but has clock_in and no clock_out, mark as half_day (they forgot to clock out)
             else if (attendance[0].clock_in && !attendance[0].clock_out) {
                 await db.query(

@@ -663,16 +663,16 @@ const SalarySlip = () => {
 
       {/* Joining Info Card */}
       {joiningInfo && (
-        <Card className="mb-4 shadow-sm border-0 bg-dark">
+        <Card className="mb-4 shadow-sm border-0 bg-white">
           <Card.Body className="p-3">
             <div className="d-flex align-items-center">
-              <FaCalendarAlt className="text-white me-3" size={20} />
+              <FaCalendarAlt className="text-dark me-3" size={20} />
               <div>
-                <h5 className="mb-1 text-white fw-semibold">Employment Start Date</h5>
-                <p className="mb-0 small text-white">
+                <h5 className="mb-1 text-dark fw-semibold">Employment Start Date</h5>
+                <p className="mb-0 small text-dark">
                   You joined on <strong>{joiningInfo.formattedDate}</strong>
                 </p>
-                <small className="text-white small">
+                <small className="text-dark small">
                   Salary slips available from {months.find(m => m.value === joiningInfo.month)?.label} {joiningInfo.year}
                 </small>
               </div>
@@ -686,7 +686,7 @@ const SalarySlip = () => {
         <Col lg={4}>
           {/* Generate New Slip Card */}
           <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-dark text-white py-2">
+            <Card.Header className="bg-light text-dark py-2">
               <h6 className="mb-0 fw-semibold small">
                 <FaCalendarAlt className="me-2" size={14} />
                 Generate New Salary Slip
@@ -777,7 +777,7 @@ const SalarySlip = () => {
         <Col lg={8}>
           {/* Salary Slips History Card */}
           <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-dark text-white py-2 d-flex justify-content-between align-items-center">
+            <Card.Header className="bg-light text-dark py-2 d-flex justify-content-between align-items-center">
               <h6 className="mb-0 fw-semibold small">
                 <FaHistory className="me-2" size={14} />
                 Salary Slip History
@@ -878,7 +878,7 @@ const SalarySlip = () => {
           {/* Employee Details Card */}
           {employee && (
             <Card className="shadow-sm border-0">
-              <Card.Header className="bg-dark text-white py-2">
+              <Card.Header className="bg-white text-dark py-2">
                 <h6 className="mb-0 fw-semibold small">
                   <FaMoneyBillWave className="me-2" size={14} />
                   Employee Details

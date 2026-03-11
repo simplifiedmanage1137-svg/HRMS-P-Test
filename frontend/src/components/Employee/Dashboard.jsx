@@ -16,13 +16,19 @@ import {
   FaBell,
   FaTrophy,
   FaBirthdayCake,
-  FaSyncAlt
+  FaSyncAlt,
+  FaChartBar,
+  FaInfoCircle,
+  FaSun,
+  FaMoon,
+  FaCloudSun
 } from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { Line, Doughnut } from 'react-chartjs-2';
+import { Bar, Doughnut } from 'react-chartjs-2';
+import { holidays, getHolidaysByRegion } from '../../data/holidays';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -32,7 +38,8 @@ import {
   Title,
   Tooltip,
   Legend,
-  ArcElement
+  ArcElement,
+  BarElement
 } from 'chart.js';
 
 // Register ChartJS components
@@ -44,7 +51,8 @@ ChartJS.register(
   Title,
   Tooltip,
   Legend,
-  ArcElement
+  ArcElement,
+  BarElement
 );
 
 const EmployeeDashboard = () => {
@@ -74,7 +82,9 @@ const EmployeeDashboard = () => {
     presentDays: 0,
     absentDays: 0,
     workingDays: 22,
-    lateDays: 0
+    lateDays: 0,
+    weeklyOffDays: 0,
+    totalLateMinutes: 0
   });
 
   // Chart data
@@ -84,9 +94,28 @@ const EmployeeDashboard = () => {
       {
         label: 'Hours Worked',
         data: [0, 0, 0, 0, 0, 0, 0],
-        borderColor: 'rgb(75, 192, 192)',
-        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-        tension: 0.4
+        backgroundColor: [
+          'rgba(54, 162, 235, 0.6)',   // Monday - Blue
+          'rgba(54, 162, 235, 0.6)',   // Tuesday - Blue
+          'rgba(54, 162, 235, 0.6)',   // Wednesday - Blue
+          'rgba(54, 162, 235, 0.6)',   // Thursday - Blue
+          'rgba(54, 162, 235, 0.6)',   // Friday - Blue
+          'rgba(169, 169, 169, 0.6)',  // Saturday - Gray (W-OFF)
+          'rgba(169, 169, 169, 0.6)'   // Sunday - Gray (W-OFF)
+        ],
+        borderColor: [
+          'rgb(54, 162, 235)',
+          'rgb(54, 162, 235)',
+          'rgb(54, 162, 235)',
+          'rgb(54, 162, 235)',
+          'rgb(54, 162, 235)',
+          'rgb(128, 128, 128)',
+          'rgb(128, 128, 128)'
+        ],
+        borderWidth: 1,
+        borderRadius: 5,
+        barPercentage: 0.7,
+        categoryPercentage: 0.8
       }
     ]
   });
@@ -101,6 +130,9 @@ const EmployeeDashboard = () => {
       }
     ]
   });
+
+  // Weekly off days (0 = Sunday, 6 = Saturday)
+  const WEEKLY_OFF_DAYS = [0, 6];
 
   useEffect(() => {
     if (user?.employeeId) {
@@ -118,6 +150,46 @@ const EmployeeDashboard = () => {
     }
   }, [attendanceHistory, leaveBalance]);
 
+  // Load upcoming holidays from holidays.js
+  useEffect(() => {
+    loadUpcomingHolidays();
+  }, []);
+
+  const loadUpcomingHolidays = () => {
+    try {
+      const today = new Date();
+      const currentYear = today.getFullYear();
+      
+      // Get holidays for current year and next year
+      const allHolidays = holidays.filter(h => {
+        const holidayDate = new Date(h.date);
+        return holidayDate >= today && holidayDate.getFullYear() <= currentYear + 1;
+      });
+
+      // Sort by date (ascending)
+      const sortedHolidays = allHolidays.sort((a, b) => new Date(a.date) - new Date(b.date));
+      
+      // Take only next 3 upcoming holidays
+      const nextHolidays = sortedHolidays.slice(0, 3).map(holiday => {
+        const holidayDate = new Date(holiday.date);
+        const diffTime = holidayDate - today;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        return {
+          date: holiday.date,
+          name: holiday.name,
+          region: holiday.region,
+          daysLeft: diffDays,
+          formattedDate: formatDate(holiday.date)
+        };
+      });
+
+      setUpcomingHolidays(nextHolidays);
+    } catch (error) {
+      console.error('Error loading upcoming holidays:', error);
+    }
+  };
+
   const loadDashboardData = async () => {
     setLoading(true);
     setError('');
@@ -130,9 +202,11 @@ const EmployeeDashboard = () => {
         fetchLeaveRequests(),
         fetchTodayAttendance(),
         fetchAttendanceHistory(),
-        fetchUpcomingHolidays(),
         fetchTodayEvents()
       ]);
+      
+      // Load upcoming holidays separately
+      loadUpcomingHolidays();
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       setError('Failed to load some dashboard data');
@@ -238,61 +312,167 @@ const EmployeeDashboard = () => {
       );
       
       const attendance = response.data.attendance || [];
-      setAttendanceHistory(attendance);
+      
+      // Generate complete calendar for the last 30 days
+      const completeHistory = generateLast30DaysAttendance(attendance, startDate, endDate);
+      
+      setAttendanceHistory(completeHistory);
       
       // Calculate attendance stats
-      const present = attendance.filter(a => a.status === 'present' || a.status === 'working').length;
-      const absent = attendance.filter(a => a.status === 'absent').length;
-      const late = attendance.filter(a => parseFloat(a.late_minutes) > 0).length;
+      let present = 0;
+      let absent = 0;
+      let halfDays = 0;
+      let weeklyOff = 0;
+      let lateDays = 0;
+      let totalLateMinutes = 0;
+      
+      completeHistory.forEach(record => {
+        if (record.isWeeklyOff) {
+          weeklyOff++;
+        } else if (record.status === 'present' || record.status === 'working') {
+          present++;
+          if (parseFloat(record.late_minutes) > 0) {
+            lateDays++;
+            totalLateMinutes += parseFloat(record.late_minutes);
+          }
+        } else if (record.status === 'half_day') {
+          halfDays++;
+          if (parseFloat(record.late_minutes) > 0) {
+            lateDays++;
+            totalLateMinutes += parseFloat(record.late_minutes);
+          }
+        } else if (record.status === 'absent') {
+          absent++;
+        }
+      });
       
       setStats(prev => ({
         ...prev,
         presentDays: present,
         absentDays: absent,
-        lateDays: late
+        halfDays: halfDays,
+        weeklyOffDays: weeklyOff,
+        lateDays: lateDays,
+        totalLateMinutes: totalLateMinutes
       }));
     } catch (error) {
       console.error('Error fetching attendance history:', error);
     }
   };
 
-  const fetchUpcomingHolidays = async () => {
-    try {
-      // You can implement this from your holidays data
-      const today = new Date();
-      const upcoming = [
-        { date: '2026-03-25', name: 'Holi', daysLeft: 19 },
-        { date: '2026-04-02', name: 'Good Friday', daysLeft: 27 },
-        { date: '2026-05-01', name: 'Labour Day', daysLeft: 56 }
-      ];
-      setUpcomingHolidays(upcoming);
-    } catch (error) {
-      console.error('Error fetching holidays:', error);
+  const generateLast30DaysAttendance = (history, startDate, endDate) => {
+    const completeHistory = [];
+    const currentDate = new Date(endDate); // Start from today and go backwards
+    
+    // Generate 30 days from today backwards
+    for (let i = 0; i < 30; i++) {
+      const date = new Date(currentDate);
+      date.setDate(date.getDate() - i);
+      
+      const dateStr = date.toISOString().split('T')[0];
+      const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+      
+      // Check if it's a weekly off day
+      const isWeeklyOff = WEEKLY_OFF_DAYS.includes(dayOfWeek);
+      
+      // Find if there's an attendance record for this date
+      const existingRecord = history.find(h => {
+        const recordDate = new Date(h.attendance_date).toISOString().split('T')[0];
+        return recordDate === dateStr;
+      });
+      
+      if (existingRecord) {
+        // Use actual attendance data
+        completeHistory.push({
+          ...existingRecord,
+          date: dateStr,
+          dayOfWeek,
+          isWeeklyOff: false,
+          displayDate: formatDate(dateStr),
+          dayName: date.toLocaleDateString('en-US', { weekday: 'short' }),
+          isToday: i === 0 // Mark today's date
+        });
+      } else {
+        // Create a placeholder record for days without attendance
+        completeHistory.push({
+          date: dateStr,
+          attendance_date: dateStr,
+          dayOfWeek,
+          isWeeklyOff,
+          dayName: date.toLocaleDateString('en-US', { weekday: 'short' }),
+          clock_in: null,
+          clock_out: null,
+          total_hours: null,
+          status: isWeeklyOff ? 'weekly_off' : 'absent',
+          late_minutes: 0,
+          late_display: null,
+          isToday: i === 0 // Mark today's date
+        });
+      }
     }
+    
+    // Sort by date descending (today first)
+    return completeHistory.sort((a, b) => new Date(b.date) - new Date(a.date));
   };
 
   const updateAttendanceChart = () => {
-    // Group attendance by day of week
-    const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    // Initialize hours for each day
+    const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const hoursByDay = [0, 0, 0, 0, 0, 0, 0];
+    const workingDaysCount = [0, 0, 0, 0, 0, 0, 0];
+    const backgroundColor = [
+      'rgba(54, 162, 235, 0.6)',   // Monday - Blue
+      'rgba(54, 162, 235, 0.6)',   // Tuesday - Blue
+      'rgba(54, 162, 235, 0.6)',   // Wednesday - Blue
+      'rgba(54, 162, 235, 0.6)',   // Thursday - Blue
+      'rgba(54, 162, 235, 0.6)',   // Friday - Blue
+      'rgba(169, 169, 169, 0.6)',  // Saturday - Gray (W-OFF)
+      'rgba(169, 169, 169, 0.6)'   // Sunday - Gray (W-OFF)
+    ];
     
     attendanceHistory.forEach(record => {
       if (record.clock_in && record.total_hours) {
         const date = new Date(record.attendance_date);
         const dayIndex = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
-        hoursByDay[dayIndex] += parseFloat(record.total_hours);
+        
+        // Adjust index for our array (Monday = 0)
+        let adjustedIndex = dayIndex === 0 ? 6 : dayIndex - 1;
+        
+        hoursByDay[adjustedIndex] += parseFloat(record.total_hours);
+        workingDaysCount[adjustedIndex]++;
       }
     });
 
+    // Calculate average hours per day
+    const avgHoursByDay = hoursByDay.map((total, index) => 
+      workingDaysCount[index] > 0 ? Math.round((total / workingDaysCount[index]) * 10) / 10 : 0
+    );
+
     setAttendanceChartData({
-      labels: daysOfWeek,
+      labels: daysOfWeek.map((day, index) => {
+        // Add W-OFF label for Saturday and Sunday
+        if (index === 5) return 'Sat (W-OFF)';
+        if (index === 6) return 'Sun (W-OFF)';
+        return day;
+      }),
       datasets: [
         {
-          label: 'Hours Worked',
-          data: hoursByDay,
-          borderColor: 'rgb(75, 192, 192)',
-          backgroundColor: 'rgba(75, 192, 192, 0.2)',
-          tension: 0.4
+          label: 'Average Working Hours',
+          data: avgHoursByDay,
+          backgroundColor: backgroundColor,
+          borderColor: [
+            'rgb(54, 162, 235)',
+            'rgb(54, 162, 235)',
+            'rgb(54, 162, 235)',
+            'rgb(54, 162, 235)',
+            'rgb(54, 162, 235)',
+            'rgb(128, 128, 128)',
+            'rgb(128, 128, 128)'
+          ],
+          borderWidth: 1,
+          borderRadius: 5,
+          barPercentage: 0.7,
+          categoryPercentage: 0.8
         }
       ]
     });
@@ -330,28 +510,85 @@ const EmployeeDashboard = () => {
 
   const getAttendanceStatus = (record) => {
     if (!record) return <Badge bg="secondary">Not Marked</Badge>;
+    
+    const attendanceDate = new Date(record.attendance_date);
+    const dayOfWeek = attendanceDate.getDay();
+    
+    // Check if it's a weekly off day
+    if (WEEKLY_OFF_DAYS.includes(dayOfWeek)) {
+      return <Badge bg="secondary"><FaMoon className="me-1" size={10} /> W-OFF</Badge>;
+    }
+    
     if (!record.clock_in) return <Badge bg="secondary">Not Clocked</Badge>;
+    
     if (record.clock_in && !record.clock_out) {
+      // Check if late while working
+      if (record.late_minutes > 0) {
+        return (
+          <Badge bg="warning">
+            <FaClock className="me-1" size={10} /> 
+            Working (Late {formatLateTime(record.late_minutes)})
+          </Badge>
+        );
+      }
       return <Badge bg="info">Working</Badge>;
     }
 
     if (record.status === 'present') {
-      return <Badge bg="success">Present</Badge>;
+      if (record.late_minutes > 0) {
+        return (
+          <Badge bg="warning">
+            <FaCheckCircle className="me-1" size={10} /> 
+            Present (Late {formatLateTime(record.late_minutes)})
+          </Badge>
+        );
+      }
+      return <Badge bg="success"><FaCheckCircle className="me-1" size={10} /> Present</Badge>;
     }
 
     if (record.status === 'half_day') {
-      return <Badge bg="warning">Half Day</Badge>;
+      if (record.late_minutes > 0) {
+        return (
+          <Badge bg="warning">
+            <FaCloudSun className="me-1" size={10} /> 
+            Half Day (Late {formatLateTime(record.late_minutes)})
+          </Badge>
+        );
+      }
+      return <Badge bg="warning"><FaCloudSun className="me-1" size={10} /> Half Day</Badge>;
     }
 
     return <Badge bg="secondary">Absent</Badge>;
+  };
 
-    return <Badge bg="secondary">Absent</Badge>;
+  const formatLateTime = (lateMinutes) => {
+    if (!lateMinutes || lateMinutes <= 0) return null;
+    
+    const totalSeconds = Math.round(lateMinutes * 60);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    const parts = [];
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (seconds > 0 || (hours === 0 && minutes === 0)) parts.push(`${seconds}s`);
+    
+    return parts.join(' ');
   };
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const formatShortDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric'
     });
@@ -365,10 +602,25 @@ const EmployeeDashboard = () => {
     });
   };
 
+  const getRegionBadge = (region) => {
+    const colors = {
+      'India': 'primary',
+      'USA': 'danger',
+      'Global': 'success'
+    };
+    return <Badge bg={colors[region] || 'secondary'}>{region}</Badge>;
+  };
+
   const calculateLeavePercentage = () => {
     const used = leaveBalance.used || 0;
     const total = leaveBalance.total_accrued || 1;
     return ((used / total) * 100).toFixed(1);
+  };
+
+  const isTodayWeeklyOff = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    return WEEKLY_OFF_DAYS.includes(dayOfWeek);
   };
 
   if (loading) {
@@ -447,7 +699,19 @@ const EmployeeDashboard = () => {
       )}
 
       {/* Today's Status Card */}
-      {todayAttendance && (
+      {isTodayWeeklyOff() ? (
+        <Card className="mb-4 border-0 shadow-sm bg-secondary bg-opacity-10">
+          <Card.Body>
+            <div className="d-flex align-items-center">
+              <FaSun size={30} className="me-3 text-secondary" />
+              <div>
+                <h6 className="mb-1">Today is Weekly Off</h6>
+                <p className="mb-0 text-muted small">Enjoy your day off! No attendance required.</p>
+              </div>
+            </div>
+          </Card.Body>
+        </Card>
+      ) : todayAttendance && (
         <Card className="mb-4 border-0 shadow-sm bg-white text-dark">
           <Card.Body>
             <div className="d-flex align-items-center justify-content-between">
@@ -501,7 +765,6 @@ const EmployeeDashboard = () => {
                   <FaUmbrellaBeach className="text-primary" size={20} />
                 </div>
               </div>
-            
             </Card.Body>
           </Card>
         </Col>
@@ -528,12 +791,17 @@ const EmployeeDashboard = () => {
             <Card.Body>
               <div className="d-flex justify-content-between align-items-start">
                 <div>
-                  <p className="text-muted small mb-1">Pending Leaves</p>
-                  <h4 className="mb-0 fw-bold text-warning">{stats.pendingLeaves}</h4>
-                  <small className="text-muted">Awaiting approval</small>
+                  <p className="text-muted small mb-1">Late Days</p>
+                  <h4 className="mb-0 fw-bold text-warning">{stats.lateDays}</h4>
+                  <small className="text-muted">Last 30 days</small>
+                  {stats.totalLateMinutes > 0 && (
+                    <small className="text-danger d-block">
+                      Total: {formatLateTime(stats.totalLateMinutes)}
+                    </small>
+                  )}
                 </div>
                 <div className="bg-warning bg-opacity-10 p-2 rounded-circle">
-                  <FaHourglassHalf className="text-warning" size={20} />
+                  <FaClock className="text-warning" size={20} />
                 </div>
               </div>
             </Card.Body>
@@ -549,7 +817,10 @@ const EmployeeDashboard = () => {
                   {upcomingHolidays.length > 0 ? (
                     <>
                       <h6 className="mb-0 fw-bold">{upcomingHolidays[0].name}</h6>
-                      <small className="text-muted">{upcomingHolidays[0].date}</small>
+                      <small className="text-muted">{formatDate(upcomingHolidays[0].date)}</small>
+                      <Badge bg="info" className="ms-2">
+                        {upcomingHolidays[0].daysLeft} days left
+                      </Badge>
                     </>
                   ) : (
                     <p className="mb-0">No upcoming holidays</p>
@@ -565,19 +836,19 @@ const EmployeeDashboard = () => {
       </Row>
 
       <Row className="g-4">
-        {/* Attendance Chart */}
+        {/* Attendance Bar Chart */}
         <Col md={6}>
           <Card className="border-0 shadow-sm">
             <Card.Header className="bg-white py-3 d-flex justify-content-between align-items-center">
               <h6 className="mb-0">
-                <FaChartLine className="me-2 text-primary" />
-                Weekly Attendance
+                <FaChartBar className="me-2 text-primary" />
+                Weekly Attendance Summary
               </h6>
-              <Badge bg="light" text="dark">Last 7 days</Badge>
+              <Badge bg="light" text="dark">Average hours per day</Badge>
             </Card.Header>
             <Card.Body>
-              <div style={{ height: '250px' }}>
-                <Line 
+              <div style={{ height: '320px', position: 'relative' }}>
+                <Bar 
                   data={attendanceChartData}
                   options={{
                     responsive: true,
@@ -585,19 +856,142 @@ const EmployeeDashboard = () => {
                     plugins: {
                       legend: {
                         display: false
+                      },
+                      tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        titleFont: {
+                          size: 12,
+                          weight: 'bold'
+                        },
+                        bodyFont: {
+                          size: 11
+                        },
+                        padding: 8,
+                        callbacks: {
+                          label: function(context) {
+                            const value = context.raw;
+                            const dayIndex = context.dataIndex;
+                            if (dayIndex === 5 || dayIndex === 6) {
+                              return value > 0 ? `  ${value} hours (Worked on W-OFF)` : '  Weekly Off - No work';
+                            }
+                            return `  ${value} hours`;
+                          }
+                        }
                       }
                     },
                     scales: {
                       y: {
                         beginAtZero: true,
+                        max: 9,
                         title: {
                           display: true,
-                          text: 'Hours'
+                          text: 'Hours',
+                          color: '#6c757d',
+                          font: {
+                            size: 11,
+                            weight: 'normal',
+                            family: 'sans-serif'
+                          },
+                          padding: { top: 0, bottom: 10 }
+                        },
+                        grid: {
+                          color: 'rgba(0, 0, 0, 0.05)',
+                          drawBorder: true,
+                          lineWidth: 0.5
+                        },
+                        ticks: {
+                          stepSize: 1,
+                          callback: function(value) {
+                            return value + 'h';
+                          },
+                          color: '#495057',
+                          font: {
+                            size: 10,
+                            weight: 'normal',
+                            family: 'sans-serif'
+                          },
+                          padding: 5,
+                          maxTicksLimit: 10
+                        },
+                        border: {
+                          display: true,
+                          color: '#dee2e6'
+                        }
+                      },
+                      x: {
+                        grid: {
+                          display: false,
+                          drawBorder: true
+                        },
+                        ticks: {
+                          color: '#495057',
+                          font: {
+                            size: 10,
+                            weight: function(context) {
+                              return (context.index === 5 || context.index === 6) ? 'bold' : 'normal';
+                            },
+                            family: 'sans-serif'
+                          },
+                          maxRotation: 0,
+                          minRotation: 0,
+                          padding: 5
+                        },
+                        border: {
+                          display: true,
+                          color: '#dee2e6'
                         }
                       }
-                    }
+                    },
+                    layout: {
+                      padding: {
+                        top: 10,
+                        bottom: 10,
+                        left: 5,
+                        right: 10
+                      }
+                    },
+                    barPercentage: 0.6,
+                    categoryPercentage: 0.7
                   }}
                 />
+              </div>
+              
+              {/* Legend with better formatting */}
+              <div className="mt-3 d-flex justify-content-center align-items-center gap-4 small">
+                <div className="d-flex align-items-center">
+                  <div 
+                    style={{ 
+                      width: '16px', 
+                      height: '16px', 
+                      backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                      borderRadius: '3px',
+                      marginRight: '6px',
+                      border: '1px solid rgb(54, 162, 235)'
+                    }}
+                  ></div>
+                  <span className="text-muted">Working Days</span>
+                </div>
+                <div className="d-flex align-items-center">
+                  <div 
+                    style={{ 
+                      width: '16px', 
+                      height: '16px', 
+                      backgroundColor: 'rgba(169, 169, 169, 0.6)',
+                      borderRadius: '3px',
+                      marginRight: '6px',
+                      border: '1px solid rgb(128, 128, 128)'
+                    }}
+                  ></div>
+                  <span className="text-muted fw-semibold">W-OFF (Weekly Off)</span>
+                </div>
+              </div>
+              
+              {/* Additional info note */}
+              <div className="mt-2 text-center text-muted small">
+                <FaInfoCircle className="me-1" size={10} />
+                Average working hours per day (based on last 30 days)
               </div>
             </Card.Body>
           </Card>
@@ -614,8 +1008,8 @@ const EmployeeDashboard = () => {
               <Badge bg="light" text="dark">Total: {leaveBalance.total_accrued} days</Badge>
             </Card.Header>
             <Card.Body>
-              <div className="d-flex align-items-center" style={{ height: '200px' }}>
-                <div style={{ width: '60%', height: '200px' }}>
+              <div className="d-flex align-items-center" style={{ height: '250px' }}>
+                <div style={{ width: '60%', height: '250px' }}>
                   <Doughnut 
                     data={leaveChartData}
                     options={{
@@ -624,23 +1018,46 @@ const EmployeeDashboard = () => {
                       plugins: {
                         legend: {
                           position: 'bottom'
+                        },
+                        tooltip: {
+                          callbacks: {
+                            label: function(context) {
+                              return `${context.raw} days`;
+                            }
+                          }
                         }
-                      }
+                      },
+                      cutout: '60%'
                     }}
                   />
                 </div>
                 <div className="ms-4">
-                  <div className="mb-2">
+                  <div className="mb-3">
                     <small className="text-muted d-block">Used</small>
-                    <strong className="text-danger">{leaveBalance.used} days</strong>
+                    <strong className="text-danger" style={{ fontSize: '1.2rem' }}>{leaveBalance.used} days</strong>
+                    <ProgressBar 
+                      now={(leaveBalance.used / leaveBalance.total_accrued) * 100} 
+                      variant="danger" 
+                      style={{ height: '4px', width: '100px' }} 
+                    />
                   </div>
-                  <div className="mb-2">
+                  <div className="mb-3">
                     <small className="text-muted d-block">Available</small>
-                    <strong className="text-success">{leaveBalance.available} days</strong>
+                    <strong className="text-success" style={{ fontSize: '1.2rem' }}>{leaveBalance.available} days</strong>
+                    <ProgressBar 
+                      now={(leaveBalance.available / leaveBalance.total_accrued) * 100} 
+                      variant="success" 
+                      style={{ height: '4px', width: '100px' }} 
+                    />
                   </div>
                   <div>
                     <small className="text-muted d-block">Pending</small>
-                    <strong className="text-warning">{leaveBalance.pending} days</strong>
+                    <strong className="text-warning" style={{ fontSize: '1.2rem' }}>{leaveBalance.pending} days</strong>
+                    <ProgressBar 
+                      now={(leaveBalance.pending / leaveBalance.total_accrued) * 100} 
+                      variant="warning" 
+                      style={{ height: '4px', width: '100px' }} 
+                    />
                   </div>
                 </div>
               </div>
@@ -719,31 +1136,45 @@ const EmployeeDashboard = () => {
 
         {/* Upcoming Holidays & Quick Actions */}
         <Col md={5}>
+          {/* Upcoming Holidays Card */}
           <Card className="border-0 shadow-sm mb-3">
-            <Card.Header className="bg-white py-3">
+            <Card.Header className="bg-white py-3 d-flex justify-content-between align-items-center">
               <h6 className="mb-0">
                 <FaCalendarAlt className="me-2 text-primary" />
                 Upcoming Holidays
               </h6>
+              <Badge bg="light" text="dark">
+                Next {upcomingHolidays.length}
+              </Badge>
             </Card.Header>
             <Card.Body className="p-0">
-              <div className="list-group list-group-flush">
-                {upcomingHolidays.map((holiday, index) => (
-                  <div key={index} className="list-group-item d-flex justify-content-between align-items-center py-2">
-                    <div>
-                      <span className="fw-semibold small">{holiday.name}</span>
-                      <br />
-                      <small className="text-muted">{holiday.date}</small>
+              {upcomingHolidays.length > 0 ? (
+                <div className="list-group list-group-flush">
+                  {upcomingHolidays.map((holiday, index) => (
+                    <div key={index} className="list-group-item d-flex justify-content-between align-items-center py-2">
+                      <div>
+                        <span className="fw-semibold small">{holiday.name}</span>
+                        <br />
+                        <small className="text-muted">{formatDate(holiday.date)}</small>
+                        <div className="mt-1">
+                          {getRegionBadge(holiday.region)}
+                        </div>
+                      </div>
+                      <Badge bg="info" pill>
+                        {holiday.daysLeft} {holiday.daysLeft === 1 ? 'day' : 'days'} left
+                      </Badge>
                     </div>
-                    <Badge bg="info" pill>
-                      {holiday.daysLeft} days left
-                    </Badge>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-3">
+                  <p className="text-muted small mb-0">No upcoming holidays</p>
+                </div>
+              )}
             </Card.Body>
           </Card>
 
+          {/* Quick Actions Card */}
           <Card className="border-0 shadow-sm">
             <Card.Header className="bg-white py-3">
               <h6 className="mb-0">
@@ -782,55 +1213,6 @@ const EmployeeDashboard = () => {
           </Card>
         </Col>
       </Row>
-
-      {/* Recent Attendance History */}
-      <Card className="mt-4 border-0 shadow-sm">
-        <Card.Header className="bg-white py-3 d-flex justify-content-between align-items-center">
-          <h6 className="mb-0">
-            <FaClock className="me-2 text-primary" />
-            Recent Attendance
-          </h6>
-          <Badge bg="light" text="dark">Last 5 days</Badge>
-        </Card.Header>
-        <Card.Body className="p-0">
-          <div className="table-responsive">
-            <Table hover className="mb-0">
-              <thead className="bg-light">
-                <tr>
-                  <th className="small text-dark">Date</th>
-                  <th className="small text-dark">Clock In</th>
-                  <th className="small text-dark">Clock Out</th>
-                  <th className="small text-dark">Hours</th>
-                  <th className="small text-dark">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {attendanceHistory.slice(0, 5).map((record, index) => (
-                  <tr key={index}>
-                    <td className="small">{formatDate(record.attendance_date)}</td>
-                    <td className="small">
-                      {formatTime(record.clock_in)}
-                      {record.late_display && (
-                        <small className="text-danger d-block">Late {record.late_display}</small>
-                      )}
-                    </td>
-                    <td className="small">{formatTime(record.clock_out)}</td>
-                    <td className="small fw-bold">{record.total_hours || '0.0'} hrs</td>
-                    <td className="small">{getAttendanceStatus(record)}</td>
-                  </tr>
-                ))}
-                {attendanceHistory.length === 0 && (
-                  <tr>
-                    <td colSpan="5" className="text-center py-3">
-                      <small className="text-muted">No attendance records found</small>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </Table>
-          </div>
-        </Card.Body>
-      </Card>
     </div>
   );
 };

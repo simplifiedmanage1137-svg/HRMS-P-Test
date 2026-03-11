@@ -12,7 +12,9 @@ import {
   FaUmbrellaBeach,
   FaClock,
   FaCheckCircle,
-  FaExclamationTriangle
+  FaExclamationTriangle,
+  FaMoneyBillWave,
+  FaHourglassHalf
 } from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -32,7 +34,8 @@ const ApplyLeave = () => {
     used: 0,
     pending: 0,
     months_completed: 0,
-    is_eligible: false
+    is_eligible: false,
+    eligible_from_date: ''
   });
   const [recentLeaves, setRecentLeaves] = useState([]);
   const [employeeDetails, setEmployeeDetails] = useState({
@@ -41,7 +44,7 @@ const ApplyLeave = () => {
     months_completed: 0
   });
   const [formData, setFormData] = useState({
-    leave_type: 'Annual',
+    leave_type: 'Unpaid',
     leave_duration: 'Full Day',
     half_day_type: '',
     start_date: '',
@@ -51,16 +54,28 @@ const ApplyLeave = () => {
   });
   const [calculatedDays, setCalculatedDays] = useState(1);
   const [errors, setErrors] = useState({});
-  const [leaveTypes] = useState([
-    'Annual',
-    'Sick',
-    'Personal',
-    'Maternity',
-    'Paternity',
-    'Bereavement',
-    'Unpaid',
-    'Compensatory Off'
-  ]);
+  
+  // Leave types based on eligibility
+  const getAvailableLeaveTypes = () => {
+    if (leaveBalance.is_eligible) {
+      // After probation - all leave types available
+      return [
+        { value: 'Annual', label: 'Annual Leave', icon: '🌴' },
+        { value: 'Sick', label: 'Sick Leave', icon: '🤒' },
+        { value: 'Personal', label: 'Personal Leave', icon: '👤' },
+        { value: 'Maternity', label: 'Maternity Leave', icon: '🤱' },
+        { value: 'Paternity', label: 'Paternity Leave', icon: '👨‍👧' },
+        { value: 'Bereavement', label: 'Bereavement Leave', icon: '💐' },
+        { value: 'Unpaid', label: 'Unpaid Leave', icon: '💰' },
+        { value: 'Compensatory Off', label: 'Compensatory Off', icon: '🕒' }
+      ];
+    } else {
+      // During probation - only Unpaid leave available
+      return [
+        { value: 'Unpaid', label: 'Unpaid Leave (Only option during probation)', icon: '💰' }
+      ];
+    }
+  };
 
   const [halfDayOptions] = useState([
     { value: 'first_half', label: 'First Half (9:00 AM - 1:00 PM)' },
@@ -79,15 +94,39 @@ const ApplyLeave = () => {
     calculateDays();
   }, [formData.start_date, formData.end_date, formData.leave_duration]);
 
+  useEffect(() => {
+    // Reset leave type based on eligibility when balance updates
+    if (!leaveBalance.is_eligible) {
+      setFormData(prev => ({
+        ...prev,
+        leave_type: 'Unpaid'
+      }));
+    } else {
+      // If eligible, default to Annual leave
+      setFormData(prev => ({
+        ...prev,
+        leave_type: 'Annual'
+      }));
+    }
+  }, [leaveBalance.is_eligible]);
+
   const fetchEmployeeDetails = async () => {
     try {
       const response = await axios.get(`http://localhost:5000/api/employees/profile/${user.employeeId}`);
       
-      // Calculate months completed
+      // Calculate months completed from joining date
       const joiningDate = new Date(response.data.joining_date);
       const today = new Date();
-      const months = (today.getFullYear() - joiningDate.getFullYear()) * 12 + 
-                     (today.getMonth() - joiningDate.getMonth());
+      let months = (today.getFullYear() - joiningDate.getFullYear()) * 12 + 
+                   (today.getMonth() - joiningDate.getMonth());
+      
+      // Adjust for day of month
+      if (today.getDate() < joiningDate.getDate()) {
+        months -= 1;
+      }
+      
+      // Ensure not negative
+      months = Math.max(0, months);
       
       setEmployeeDetails({
         joining_date: response.data.joining_date,
@@ -106,38 +145,32 @@ const ApplyLeave = () => {
     }
   };
 
-  const fetchLeaveBalance = async () => {
-    try {
-      setLoading(true);
-      const response = await axios.get(`http://localhost:5000/api/leaves/balance/${user.employeeId}`);
-      
-      // Calculate months from employee details if not in response
-      let monthsCompleted = response.data.months_completed || 0;
-      if (!monthsCompleted && employeeDetails.joining_date) {
-        const joiningDate = new Date(employeeDetails.joining_date);
-        const today = new Date();
-        monthsCompleted = (today.getFullYear() - joiningDate.getFullYear()) * 12 + 
-                         (today.getMonth() - joiningDate.getMonth());
-      }
-      
-      const isEligible = monthsCompleted >= 6;
-      
-      setLeaveBalance({
-        available: response.data.available || 0,
-        total_accrued: response.data.total_accrued || 0,
-        used: response.data.used || 0,
-        pending: response.data.pending || 0,
-        months_completed: monthsCompleted,
-        is_eligible: isEligible
-      });
-      
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching leave balance:', error);
-      showNotification('Failed to load leave balance', 'danger');
-      setLoading(false);
-    }
-  };
+// ApplyLeave.jsx mein fetchLeaveBalance function mein yeh add karo:
+
+const fetchLeaveBalance = async () => {
+  try {
+    setLoading(true);
+    const response = await axios.get(`http://localhost:5000/api/leaves/balance/${user.employeeId}`);
+    
+    console.log('🔍 LEAVE BALANCE RESPONSE:', response.data); // YEH DEKHO
+    
+    setLeaveBalance({
+      available: response.data.available || 0,
+      total_accrued: response.data.total_accrued || 0,
+      used: response.data.used || 0,
+      pending: response.data.pending || 0,
+      months_completed: response.data.months_completed || 0,
+      is_eligible: response.data.is_eligible || false,
+      eligible_from_date: response.data.eligible_from_date || ''
+    });
+    
+    setLoading(false);
+  } catch (error) {
+    console.error('Error fetching leave balance:', error);
+    showNotification('Failed to load leave balance', 'danger');
+    setLoading(false);
+  }
+};
 
   const fetchRecentLeaves = async () => {
     try {
@@ -207,13 +240,6 @@ const ApplyLeave = () => {
   const validateForm = () => {
     const newErrors = {};
 
-    // Check eligibility first
-    if (!leaveBalance.is_eligible) {
-      newErrors.eligibility = `You need to complete 6 months before applying for leave. Current: ${leaveBalance.months_completed} months completed.`;
-      setErrors(newErrors);
-      return false;
-    }
-
     if (!formData.leave_type) {
       newErrors.leave_type = 'Please select leave type';
     }
@@ -240,9 +266,11 @@ const ApplyLeave = () => {
       newErrors.reason = 'Reason must be at least 10 characters';
     }
 
-    // Check leave balance
-    if (calculatedDays > leaveBalance.available) {
-      newErrors.balance = `Insufficient leave balance. Available: ${leaveBalance.available} days`;
+    // Check leave balance only for non-Unpaid leaves after probation
+    if (leaveBalance.is_eligible && formData.leave_type !== 'Unpaid') {
+      if (calculatedDays > leaveBalance.available) {
+        newErrors.balance = `Insufficient leave balance. Available: ${leaveBalance.available} days`;
+      }
     }
 
     setErrors(newErrors);
@@ -278,7 +306,7 @@ const ApplyLeave = () => {
         
         // Reset form
         setFormData({
-          leave_type: 'Annual',
+          leave_type: leaveBalance.is_eligible ? 'Annual' : 'Unpaid',
           leave_duration: 'Full Day',
           half_day_type: '',
           start_date: '',
@@ -312,6 +340,7 @@ const ApplyLeave = () => {
   };
 
   const getLeaveBalanceColor = () => {
+    if (!leaveBalance.is_eligible) return 'secondary';
     const percentage = (leaveBalance.used / leaveBalance.total_accrued) * 100;
     if (percentage >= 80) return 'danger';
     if (percentage >= 50) return 'warning';
@@ -337,18 +366,9 @@ const ApplyLeave = () => {
     });
   };
 
-  const calculateEligibilityDate = () => {
-    if (!employeeDetails.joining_date) return 'N/A';
-    const joiningDate = new Date(employeeDetails.joining_date);
-    joiningDate.setMonth(joiningDate.getMonth() + 6);
-    return joiningDate.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+  const calculateProgressToEligibility = () => {
+    return Math.min(100, (leaveBalance.months_completed / 6) * 100);
   };
-
-  const monthsUntilEligible = 6 - leaveBalance.months_completed;
 
   if (loading) {
     return (
@@ -361,6 +381,11 @@ const ApplyLeave = () => {
     );
   }
 
+  const availableLeaveTypes = getAvailableLeaveTypes();
+
+  // Debug log
+  console.log('Rendering with leaveBalance:', leaveBalance);
+
   return (
     <div className="p-4" style={{ backgroundColor: '#f8f9fc', minHeight: '100vh' }}>
       {/* Header */}
@@ -371,7 +396,9 @@ const ApplyLeave = () => {
             Apply for Leave
           </h4>
           <p className="text-muted mb-0 small">
-            Submit your leave request for approval
+            {leaveBalance.is_eligible 
+              ? 'You can apply for any type of leave' 
+              : 'During probation, only Unpaid Leave is available'}
           </p>
         </div>
         <Button 
@@ -392,28 +419,42 @@ const ApplyLeave = () => {
               <h6 className="mb-0">Leave Request Form</h6>
             </Card.Header>
             <Card.Body>
-              {/* Eligibility Alert - Only shows warning, doesn't hide balance */}
+              {/* Probation Status Alert - Only show if NOT eligible */}
               {!leaveBalance.is_eligible && (
-                <Alert variant="warning" className="mb-4">
-                  <div className="d-flex">
-                    <FaExclamationTriangle className="me-3 mt-1" size={20} />
+                <Alert variant="info" className="mb-4">
+                  <div className="d-flex align-items-center">
+                    <FaInfoCircle className="me-3 text-primary" size={20} />
                     <div>
-                      <h6 className="alert-heading">Application Restricted</h6>
-                      <p className="mb-1 small">
-                        You cannot apply for leave until you complete 6 months of service.
-                      </p>
+                      <h6 className="alert-heading mb-1">Probation Period</h6>
                       <p className="mb-0 small">
-                        <strong>Your Leave Balance:</strong> {leaveBalance.available} days (Visible but cannot apply)<br />
-                        <strong>Months Completed:</strong> {leaveBalance.months_completed} / 6 months<br />
-                        <strong>Eligible from:</strong> {calculateEligibilityDate()}
+                        You are currently in your probation period. Only <strong>Unpaid Leave</strong> is available.
+                        After completing 6 months (from {leaveBalance.eligible_from_date || 'N/A'}), all leave types will be available.
                       </p>
                     </div>
                   </div>
                 </Alert>
               )}
 
+              {/* Eligibility Progress Bar - Only show during probation */}
+              {!leaveBalance.is_eligible && (
+                <div className="mb-4">
+                  <div className="d-flex justify-content-between mb-1 small">
+                    <span className="text-muted">Progress to eligibility:</span>
+                    <span className="fw-semibold">{leaveBalance.months_completed} / 6 months</span>
+                  </div>
+                  <ProgressBar 
+                    now={calculateProgressToEligibility()} 
+                    variant="info"
+                    style={{ height: '8px' }}
+                  />
+                  <small className="text-muted d-block mt-1">
+                    Eligible from: {leaveBalance.eligible_from_date || 'N/A'}
+                  </small>
+                </div>
+              )}
+
               <Form onSubmit={handleSubmit}>
-                {/* Leave Type - Disabled if not eligible */}
+                {/* Leave Type */}
                 <Form.Group className="mb-3">
                   <Form.Label className="small fw-semibold text-muted">
                     Leave Type <span className="text-danger">*</span>
@@ -424,10 +465,11 @@ const ApplyLeave = () => {
                     onChange={handleChange}
                     size="sm"
                     isInvalid={!!errors.leave_type}
-                    disabled={!leaveBalance.is_eligible}
                   >
-                    {leaveTypes.map(type => (
-                      <option key={type} value={type}>{type}</option>
+                    {availableLeaveTypes.map(type => (
+                      <option key={type.value} value={type.value}>
+                        {type.icon} {type.label}
+                      </option>
                     ))}
                   </Form.Select>
                   {errors.leave_type && (
@@ -438,12 +480,12 @@ const ApplyLeave = () => {
                   {!leaveBalance.is_eligible && (
                     <Form.Text className="text-muted">
                       <FaInfoCircle className="me-1" size={10} />
-                      You need to complete 6 months to select leave type
+                      During probation, only Unpaid Leave is available. Paid leaves will be available after {leaveBalance.eligible_from_date || 'N/A'}
                     </Form.Text>
                   )}
                 </Form.Group>
 
-                {/* Leave Duration - Disabled if not eligible */}
+                {/* Leave Duration */}
                 <Form.Group className="mb-3">
                   <Form.Label className="small fw-semibold text-muted">
                     Leave Duration <span className="text-danger">*</span>
@@ -458,7 +500,6 @@ const ApplyLeave = () => {
                       checked={formData.leave_duration === 'Full Day'}
                       onChange={handleChange}
                       className="me-3"
-                      disabled={!leaveBalance.is_eligible}
                     />
                     <Form.Check
                       inline
@@ -468,12 +509,11 @@ const ApplyLeave = () => {
                       value="Half Day"
                       checked={formData.leave_duration === 'Half Day'}
                       onChange={handleChange}
-                      disabled={!leaveBalance.is_eligible}
                     />
                   </div>
                 </Form.Group>
 
-                {/* Half Day Type - Disabled if not eligible */}
+                {/* Half Day Type */}
                 {formData.leave_duration === 'Half Day' && (
                   <Form.Group className="mb-3">
                     <Form.Label className="small fw-semibold text-muted">
@@ -485,7 +525,6 @@ const ApplyLeave = () => {
                       onChange={handleChange}
                       size="sm"
                       isInvalid={!!errors.half_day_type}
-                      disabled={!leaveBalance.is_eligible}
                     >
                       <option value="">Choose which half...</option>
                       {halfDayOptions.map(option => (
@@ -502,7 +541,7 @@ const ApplyLeave = () => {
                   </Form.Group>
                 )}
 
-                {/* Date Range - Disabled if not eligible */}
+                {/* Date Range */}
                 <Row className="mb-3">
                   <Col md={6}>
                     <Form.Group>
@@ -517,7 +556,6 @@ const ApplyLeave = () => {
                         size="sm"
                         isInvalid={!!errors.start_date}
                         min={new Date().toISOString().split('T')[0]}
-                        disabled={!leaveBalance.is_eligible}
                       />
                       {errors.start_date && (
                         <Form.Control.Feedback type="invalid">
@@ -539,7 +577,7 @@ const ApplyLeave = () => {
                         onChange={handleChange}
                         size="sm"
                         isInvalid={!!errors.end_date}
-                        disabled={formData.leave_duration === 'Half Day' || !leaveBalance.is_eligible}
+                        disabled={formData.leave_duration === 'Half Day'}
                         min={formData.start_date || new Date().toISOString().split('T')[0]}
                       />
                       {errors.end_date && (
@@ -551,7 +589,7 @@ const ApplyLeave = () => {
                   </Col>
                 </Row>
 
-                {/* Reason - Disabled if not eligible */}
+                {/* Reason */}
                 <Form.Group className="mb-3">
                   <Form.Label className="small fw-semibold text-muted">
                     Reason for Leave <span className="text-danger">*</span>
@@ -565,7 +603,6 @@ const ApplyLeave = () => {
                     size="sm"
                     placeholder="Please provide detailed reason for your leave request..."
                     isInvalid={!!errors.reason}
-                    disabled={!leaveBalance.is_eligible}
                   />
                   {errors.reason && (
                     <Form.Control.Feedback type="invalid">
@@ -577,7 +614,7 @@ const ApplyLeave = () => {
                   </Form.Text>
                 </Form.Group>
 
-                {/* Reporting Manager - Read-only but visible */}
+                {/* Reporting Manager */}
                 <Form.Group className="mb-4">
                   <Form.Label className="small fw-semibold text-muted">
                     Reporting Manager
@@ -594,31 +631,30 @@ const ApplyLeave = () => {
                   />
                 </Form.Group>
 
-                {/* Balance Error - Only show if eligible */}
-                {errors.balance && leaveBalance.is_eligible && (
+                {/* Balance Error - Only show for non-Unpaid leaves after probation */}
+                {errors.balance && leaveBalance.is_eligible && formData.leave_type !== 'Unpaid' && (
                   <Alert variant="danger" className="py-2 small">
                     <FaExclamationTriangle className="me-2" />
                     {errors.balance}
                   </Alert>
                 )}
 
-                {/* Eligibility Error - Shown when trying to submit while ineligible */}
-                {errors.eligibility && (
-                  <Alert variant="warning" className="py-2 small">
-                    <FaInfoCircle className="me-2" />
-                    {errors.eligibility}
+                {/* Info for Unpaid Leave during probation */}
+                {!leaveBalance.is_eligible && formData.leave_type === 'Unpaid' && (
+                  <Alert variant="info" className="py-2 small">
+                    <FaMoneyBillWave className="me-2" />
+                    Unpaid Leave will not deduct from your accrued leave balance.
                   </Alert>
                 )}
 
-                {/* Submit Buttons - Disabled if not eligible */}
+                {/* Submit Buttons */}
                 <div className="d-flex gap-2">
                   <Button
                     type="submit"
                     variant="primary"
                     size="sm"
-                    disabled={submitting || !leaveBalance.is_eligible || (leaveBalance.is_eligible && calculatedDays > leaveBalance.available)}
+                    disabled={submitting || (leaveBalance.is_eligible && formData.leave_type !== 'Unpaid' && calculatedDays > leaveBalance.available)}
                     className="px-4"
-                    title={!leaveBalance.is_eligible ? "You need to complete 6 months before applying" : ""}
                   >
                     {submitting ? (
                       <>
@@ -641,14 +677,6 @@ const ApplyLeave = () => {
                     Cancel
                   </Button>
                 </div>
-
-                {/* Info message when not eligible */}
-                {!leaveBalance.is_eligible && (
-                  <div className="mt-3 p-2 bg-light rounded small text-muted">
-                    <FaInfoCircle className="me-2 text-primary" size={12} />
-                    Your leave balance of <strong>{leaveBalance.available} days</strong> is visible, but you cannot apply until you complete 6 months.
-                  </div>
-                )}
               </Form>
             </Card.Body>
           </Card>
@@ -656,7 +684,7 @@ const ApplyLeave = () => {
 
         {/* Right Column - Leave Balance & Info */}
         <Col lg={4}>
-          {/* Leave Balance Card - ALWAYS VISIBLE */}
+          {/* Leave Balance Card */}
           <Card className="border-0 shadow-sm mb-3">
             <Card.Header className="bg-white py-3">
               <h6 className="mb-0">
@@ -665,30 +693,34 @@ const ApplyLeave = () => {
               </h6>
             </Card.Header>
             <Card.Body>
-              {/* Eligibility Status Badge */}
-              <div className={`text-center mb-3 p-2 rounded ${leaveBalance.is_eligible ? 'bg-success bg-opacity-10' : 'bg-warning bg-opacity-10'}`}>
+              {/* Status Badge */}
+              <div className={`text-center mb-3 p-2 rounded ${leaveBalance.is_eligible ? 'bg-success bg-opacity-10' : 'bg-info bg-opacity-10'}`}>
                 {leaveBalance.is_eligible ? (
                   <>
                     <FaCheckCircle className="text-success mb-2" size={24} />
-                    <p className="small text-success fw-semibold mb-0">Eligible to Apply</p>
+                    <p className="small text-success fw-semibold mb-0">Probation Completed</p>
+                    <p className="small text-muted mt-1">All leave types available</p>
                   </>
                 ) : (
                   <>
-                    <FaExclamationTriangle className="text-warning mb-2" size={24} />
-                    <p className="small text-warning fw-semibold mb-0">Application Restricted</p>
-                    <p className="small text-muted mt-1">
-                      {monthsUntilEligible} months remaining
-                    </p>
+                    <FaHourglassHalf className="text-info mb-2" size={24} />
+                    <p className="small text-info fw-semibold mb-0">Probation Period</p>
+                    <p className="small text-muted mt-1">Only Unpaid Leave available</p>
                   </>
                 )}
               </div>
 
-              {/* Leave Balance Display - ALWAYS VISIBLE */}
+              {/* Leave Balance Display */}
               <div className="text-center mb-3">
-                <h3 className={`display-6 fw-bold ${leaveBalance.is_eligible ? 'text-primary' : 'text-primary'}`}>
+                <h3 className={`display-6 fw-bold ${leaveBalance.is_eligible ? 'text-primary' : 'text-muted'}`}>
                   {leaveBalance.available}
                 </h3>
                 <p className="text-muted small">Available Leaves</p>
+                {!leaveBalance.is_eligible && (
+                  <Badge bg="secondary" className="mt-1">
+                    Accruing but not usable yet
+                  </Badge>
+                )}
               </div>
 
               {/* Leave Balance Details */}
@@ -706,23 +738,38 @@ const ApplyLeave = () => {
                   <span className="fw-semibold">{leaveBalance.pending} days</span>
                 </div>
 
-                {/* Progress Bar */}
+                {/* Progress Bar - Only show if eligible or for display */}
                 {leaveBalance.total_accrued > 0 && (
-                  <ProgressBar 
-                    now={(leaveBalance.used / leaveBalance.total_accrued) * 100} 
-                    variant={getLeaveBalanceColor()} 
-                    style={{ height: '6px' }}
-                  />
+                  <>
+                    <ProgressBar 
+                      now={(leaveBalance.used / leaveBalance.total_accrued) * 100} 
+                      variant={getLeaveBalanceColor()} 
+                      style={{ height: '6px' }}
+                    />
+                    <small className="text-muted d-block text-center mt-1">
+                      {((leaveBalance.used / leaveBalance.total_accrued) * 100 || 0).toFixed(1)}% used
+                    </small>
+                  </>
                 )}
               </div>
 
-              {/* Days Calculation Preview - Only when eligible and dates selected */}
-              {leaveBalance.is_eligible && calculatedDays > 0 && (
+              {/* Days Calculation Preview */}
+              {calculatedDays > 0 && (
                 <Alert variant="info" className="py-2 small mb-0">
                   <FaClock className="me-2" />
-                  This request will use <strong>{calculatedDays} day{calculatedDays > 1 ? 's' : ''}</strong>
-                  <br />
-                  <small>Balance after request: <strong>{leaveBalance.available - calculatedDays}</strong> days</small>
+                  This request is for <strong>{calculatedDays} day{calculatedDays > 1 ? 's' : ''}</strong>
+                  {leaveBalance.is_eligible && formData.leave_type !== 'Unpaid' && (
+                    <>
+                      <br />
+                      <small>Balance after request: <strong>{leaveBalance.available - calculatedDays}</strong> days</small>
+                    </>
+                  )}
+                  {(!leaveBalance.is_eligible || formData.leave_type === 'Unpaid') && (
+                    <>
+                      <br />
+                      <small className="text-muted">Unpaid Leave - No deduction from balance</small>
+                    </>
+                  )}
                 </Alert>
               )}
 
@@ -734,23 +781,16 @@ const ApplyLeave = () => {
                 <p className="mb-1">
                   <strong>Months Completed:</strong> {leaveBalance.months_completed} / 6
                 </p>
-                {!leaveBalance.is_eligible && (
-                  <p className="mb-0 text-warning">
-                    <strong>Eligible from:</strong> {calculateEligibilityDate()}
+                {!leaveBalance.is_eligible ? (
+                  <p className="mb-0 text-info">
+                    <strong>Probation ends:</strong> {leaveBalance.eligible_from_date || 'N/A'}
+                  </p>
+                ) : (
+                  <p className="mb-0 text-success">
+                    <strong>Probation completed on:</strong> {leaveBalance.eligible_from_date}
                   </p>
                 )}
               </div>
-
-              {/* Info for ineligible employees */}
-              {!leaveBalance.is_eligible && (
-                <div className="mt-3 p-2 bg-light rounded small">
-                  <FaInfoCircle className="me-2 text-primary" size={10} />
-                  <span className="text-muted">
-                    Your leave balance is <strong>{leaveBalance.available} days</strong>. 
-                    You can see your balance but cannot apply yet.
-                  </span>
-                </div>
-              )}
             </Card.Body>
           </Card>
 
@@ -769,7 +809,10 @@ const ApplyLeave = () => {
                     <div key={leave.id || index} className="list-group-item py-2">
                       <div className="d-flex justify-content-between align-items-center">
                         <div>
-                          <span className="small fw-semibold">{leave.leave_type}</span>
+                          <span className="small fw-semibold">
+                            {leave.leave_type === 'Unpaid' ? '💰 ' : '🌴 '}
+                            {leave.leave_type}
+                          </span>
                           <br />
                           <small className="text-muted">
                             {formatDate(leave.start_date)}
@@ -798,11 +841,24 @@ const ApplyLeave = () => {
             <Card.Body className="p-3">
               <h6 className="small fw-semibold mb-2">Leave Policy</h6>
               <ul className="small text-muted ps-3 mb-0">
-                <li>6 months probation period required before applying for leave</li>
-                <li>Annual leaves: 1.5 days per month (total 18 days/year)</li>
-                <li>Submit at least 3 days in advance</li>
+                <li>
+                  <strong>During Probation (First 6 months):</strong>
+                  <ul className="ps-3 mt-1">
+                    <li>Only Unpaid Leave is available</li>
+                    <li>Leaves accrue at 1.5 days/month but cannot be used</li>
+                    <li>Unpaid Leave doesn't deduct from accrued balance</li>
+                  </ul>
+                </li>
+                <li className="mt-2">
+                  <strong>After Probation (6+ months):</strong>
+                  <ul className="ps-3 mt-1">
+                    <li>All leave types become available</li>
+                    <li>Annual leaves: 1.5 days/month (18 days/year)</li>
+                    <li>Can use previously accrued leaves</li>
+                  </ul>
+                </li>
+                <li className="mt-2">Submit at least 3 days in advance</li>
                 <li>Medical leaves require doctor's note</li>
-                <li>Unpaid leaves available after exhausting all leaves</li>
               </ul>
             </Card.Body>
           </Card>

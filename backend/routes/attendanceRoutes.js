@@ -1,3 +1,4 @@
+// routes/attendanceRoutes.js
 const express = require('express');
 const router = express.Router();
 const attendanceController = require('../controllers/attendanceController');
@@ -10,7 +11,5 @@ router.get('/today/:employee_id', attendanceController.getTodayAttendance);
 
 // Admin endpoints
 router.get('/report', attendanceController.getAttendanceReport);
-
-
 
 module.exports = router;

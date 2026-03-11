@@ -353,12 +353,45 @@ app.get('/api/employees/profile/:employeeId', async (req, res) => {
     }
 });
 
+// server.js - Update the POST /api/employees endpoint with better error handling
+
 // Create new employee
 app.post('/api/employees', async (req, res) => {
     try {
         const employeeData = req.body;
 
         console.log('📝 Creating new employee:', employeeData.email);
+        console.log('Employee ID to create:', employeeData.employee_id);
+
+        // Check if employee_id already exists
+        const [existing] = await db.query(
+            'SELECT employee_id FROM employees WHERE employee_id = ?',
+            [employeeData.employee_id]
+        );
+
+        if (existing.length > 0) {
+            console.log('❌ Employee ID already exists:', employeeData.employee_id);
+            return res.status(400).json({
+                success: false,
+                message: 'Employee ID already exists. Please try again.',
+                error: `Duplicate employee_id: ${employeeData.employee_id}`
+            });
+        }
+
+        // Check if email already exists
+        const [existingEmail] = await db.query(
+            'SELECT email FROM employees WHERE email = ?',
+            [employeeData.email]
+        );
+
+        if (existingEmail.length > 0) {
+            console.log('❌ Email already exists:', employeeData.email);
+            return res.status(400).json({
+                success: false,
+                message: 'Email already exists. Please use a different email.',
+                error: `Duplicate email: ${employeeData.email}`
+            });
+        }
 
         const query = `
             INSERT INTO employees (
@@ -384,8 +417,8 @@ app.post('/api/employees', async (req, res) => {
             employeeData.reporting_manager || null,
             employeeData.employment_type || 'Full Time',
             employeeData.shift_timing || '9:00 AM - 6:00 PM',
-            employeeData.in_hand_salary,
-            employeeData.gross_salary,
+            employeeData.in_hand_salary || 0,
+            employeeData.gross_salary || 0,
             employeeData.bank_account_name,
             employeeData.account_number,
             employeeData.ifsc_code,
@@ -399,14 +432,22 @@ app.post('/api/employees', async (req, res) => {
             employeeData.contract_policy || null
         ];
 
+        console.log('Executing INSERT query...');
         const [result] = await db.query(query, values);
+        console.log('✅ Employee inserted with ID:', result.insertId);
 
         // Create leave balance for employee
-        await db.query(
-            `INSERT INTO leave_balances (employee_id, total_accrued, used, pending, available) 
-             VALUES (?, 12, 0, 0, 12)`,
-            [employeeData.employee_id]
-        );
+        try {
+            await db.query(
+                `INSERT INTO leave_balances (employee_id, total_accrued, used, pending, available) 
+                 VALUES (?, 12, 0, 0, 12)`,
+                [employeeData.employee_id]
+            );
+            console.log('✅ Leave balance created for employee:', employeeData.employee_id);
+        } catch (leaveError) {
+            console.error('⚠️ Error creating leave balance:', leaveError);
+            // Don't fail the whole request if leave balance creation fails
+        }
 
         res.status(201).json({
             success: true,
@@ -419,6 +460,22 @@ app.post('/api/employees', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error creating employee:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        
+        // Handle duplicate entry error specifically
+        if (error.code === 'ER_DUP_ENTRY') {
+            const match = error.message.match(/'([^']+)'/g);
+            const duplicateField = match ? match[0] : 'unknown';
+            
+            return res.status(400).json({
+                success: false,
+                message: 'Duplicate entry detected. Please check your data.',
+                error: error.message,
+                duplicate_field: duplicateField
+            });
+        }
+        
         res.status(500).json({
             success: false,
             message: 'Failed to create employee',
@@ -697,751 +754,757 @@ app.get('/api/employees/:employeeId/documents/:documentType', async (req, res) =
 // ============== LEAVE ROUTES ==============
 
 // Get all leaves (supports filtering by employee)
-app.get('/api/leaves', async (req, res) => {
-    try {
-        const { employee_id } = req.query;
+// app.get('/api/leaves', async (req, res) => {
+//     try {
+//         const { employee_id } = req.query;
 
-        let query = `
-            SELECT l.*, 
-                   e.first_name, e.last_name, e.department, e.employee_id,
-                   e.reporting_manager
-            FROM leaves l
-            JOIN employees e ON l.employee_id = e.employee_id
-        `;
+//         let query = `
+//             SELECT l.*, 
+//                    e.first_name, e.last_name, e.department, e.employee_id,
+//                    e.reporting_manager
+//             FROM leaves l
+//             JOIN employees e ON l.employee_id = e.employee_id
+//         `;
 
-        const params = [];
-        if (employee_id) {
-            query += ' WHERE l.employee_id = ?';
-            params.push(employee_id);
-        }
+//         const params = [];
+//         if (employee_id) {
+//             query += ' WHERE l.employee_id = ?';
+//             params.push(employee_id);
+//         }
 
-        query += ' ORDER BY l.created_at DESC';
+//         query += ' ORDER BY l.created_at DESC';
 
-        const [rows] = await db.query(query, params);
-        res.json(rows);
-    } catch (error) {
-        console.error('❌ Error fetching leaves:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
+//         const [rows] = await db.query(query, params);
+//         res.json(rows);
+//     } catch (error) {
+//         console.error('❌ Error fetching leaves:', error);
+//         res.status(500).json({ error: error.message });
+//     }
+// });
 
 // Get leave balance for current year
-app.get('/api/leaves/balance/:employeeId', async (req, res) => {
-    try {
-        const { employeeId } = req.params;
-        const today = new Date();
-        const currentYear = today.getFullYear();
-        const currentMonth = today.getMonth() + 1;
-        const currentDay = today.getDate();
+// app.get('/api/leaves/balance/:employeeId', async (req, res) => {
+//     try {
+//         const { employeeId } = req.params;
+//         const today = new Date();
+//         const currentYear = today.getFullYear();
+//         const currentMonth = today.getMonth() + 1;
+//         const currentDay = today.getDate();
 
-        console.log(`Fetching leave balance for employee: ${employeeId} for year ${currentYear}`);
+//         console.log(`Fetching leave balance for employee: ${employeeId} for year ${currentYear}`);
 
-        // First check if employee exists
-        const [employees] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employeeId]
-        );
+//         // First check if employee exists
+//         const [employees] = await db.query(
+//             'SELECT * FROM employees WHERE employee_id = ?',
+//             [employeeId]
+//         );
 
-        if (employees.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Employee not found'
-            });
-        }
+//         if (employees.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: 'Employee not found'
+//             });
+//         }
 
-        const joiningDate = new Date(employees[0].joining_date);
-        const joinYear = joiningDate.getFullYear();
-        const joinMonth = joiningDate.getMonth() + 1;
+//         const joiningDate = new Date(employees[0].joining_date);
+//         const joinYear = joiningDate.getFullYear();
+//         const joinMonth = joiningDate.getMonth() + 1;
 
-        // Calculate completed months for current year based on join date
-        const calculateCompletedMonths = () => {
-            // If the requested year is before joining year, no accrual
-            if (currentYear < joinYear) return 0;
+//         // Calculate completed months for current year based on join date
+//         const calculateCompletedMonths = () => {
+//             // If the requested year is before joining year, no accrual
+//             if (currentYear < joinYear) return 0;
 
-            // Determine start month in the current year
-            const startMonth = currentYear === joinYear ? joinMonth : 1;
+//             // Determine start month in the current year
+//             const startMonth = currentYear === joinYear ? joinMonth : 1;
 
-            let completedMonths = 0;
-            for (let month = startMonth; month <= currentMonth; month++) {
-                if (month < currentMonth) {
-                    completedMonths += 1; // previous months are fully completed
-                } else {
-                    // current month: only count if we are past the last day of the month
-                    const lastDayOfMonth = new Date(currentYear, month, 0).getDate();
-                    if (currentDay > lastDayOfMonth) {
-                        completedMonths += 1;
-                    }
-                }
-            }
+//             let completedMonths = 0;
+//             for (let month = startMonth; month <= currentMonth; month++) {
+//                 if (month < currentMonth) {
+//                     completedMonths += 1; // previous months are fully completed
+//                 } else {
+//                     // current month: only count if we are past the last day of the month
+//                     const lastDayOfMonth = new Date(currentYear, month, 0).getDate();
+//                     if (currentDay > lastDayOfMonth) {
+//                         completedMonths += 1;
+//                     }
+//                 }
+//             }
 
-            return completedMonths;
-        };
+//             return completedMonths;
+//         };
 
-        const completedMonthsInYear = calculateCompletedMonths();
-        const totalAccrued = completedMonthsInYear * 1.5;
+//         const completedMonthsInYear = calculateCompletedMonths();
+//         const totalAccrued = completedMonthsInYear * 1.5;
 
-        // Get or create leave balance for current year
-        const [balance] = await db.query(
-            'SELECT * FROM leave_balances WHERE employee_id = ? AND year = ?',
-            [employeeId, currentYear]
-        );
+//         // Get or create leave balance for current year
+//         const [balance] = await db.query(
+//             'SELECT * FROM leave_balances WHERE employee_id = ? AND year = ?',
+//             [employeeId, currentYear]
+//         );
 
-        let used = 0;
-        let pending = 0;
+//         let used = 0;
+//         let pending = 0;
 
-        if (balance.length > 0) {
-            used = parseFloat(balance[0].used) || 0;
-            pending = parseFloat(balance[0].pending) || 0;
+//         if (balance.length > 0) {
+//             used = parseFloat(balance[0].used) || 0;
+//             pending = parseFloat(balance[0].pending) || 0;
 
-            const available = totalAccrued - used - pending;
+//             const available = totalAccrued - used - pending;
 
-            // Update database to ensure it matches calculated accrual
-            await db.query(
-                `UPDATE leave_balances
-                 SET total_accrued = ?, available = ?
-                 WHERE employee_id = ? AND year = ?`,
-                [totalAccrued, available, employeeId, currentYear]
-            );
+//             // Update database to ensure it matches calculated accrual
+//             await db.query(
+//                 `UPDATE leave_balances
+//                  SET total_accrued = ?, available = ?
+//                  WHERE employee_id = ? AND year = ?`,
+//                 [totalAccrued, available, employeeId, currentYear]
+//             );
 
-            return res.json({
-                employee_id: employeeId,
-                year: currentYear,
-                total_accrued: totalAccrued,
-                used,
-                pending,
-                available,
-                completed_months_in_year: completedMonthsInYear,
-                message: 'Leaves reset at year end; accrual adds 1.5 per fully completed month.'
-            });
-        }
+//             return res.json({
+//                 employee_id: employeeId,
+//                 year: currentYear,
+//                 total_accrued: totalAccrued,
+//                 used,
+//                 pending,
+//                 available,
+//                 completed_months_in_year: completedMonthsInYear,
+//                 message: 'Leaves reset at year end; accrual adds 1.5 per fully completed month.'
+//             });
+//         }
 
-        // No balance record exists yet - create fresh (no carry forward)
-        const available = totalAccrued;
-        await db.query(
-            `INSERT INTO leave_balances (employee_id, year, total_accrued, used, pending, available, carry_forward)
-             VALUES (?, ?, ?, 0, 0, ?, 0)`,
-            [employeeId, currentYear, totalAccrued, available]
-        );
+//         // No balance record exists yet - create fresh (no carry forward)
+//         const available = totalAccrued;
+//         await db.query(
+//             `INSERT INTO leave_balances (employee_id, year, total_accrued, used, pending, available, carry_forward)
+//              VALUES (?, ?, ?, 0, 0, ?, 0)`,
+//             [employeeId, currentYear, totalAccrued, available]
+//         );
 
-        return res.json({
-            employee_id: employeeId,
-            year: currentYear,
-            total_accrued: totalAccrued,
-            used: 0,
-            pending: 0,
-            available,
-            completed_months_in_year: completedMonthsInYear,
-            message: 'Leaves reset at year end; accrual adds 1.5 per fully completed month.'
-        });
+//         return res.json({
+//             employee_id: employeeId,
+//             year: currentYear,
+//             total_accrued: totalAccrued,
+//             used: 0,
+//             pending: 0,
+//             available,
+//             completed_months_in_year: completedMonthsInYear,
+//             message: 'Leaves reset at year end; accrual adds 1.5 per fully completed month.'
+//         });
 
-    } catch (error) {
-        console.error('Error fetching leave balance:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch leave balance',
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('Error fetching leave balance:', error);
+//         res.status(500).json({
+//             success: false,
+//             message: 'Failed to fetch leave balance',
+//             error: error.message
+//         });
+//     }
+// });
 
 // Get leave balance for specific year
-app.get('/api/leaves/balance/:employeeId/:year', async (req, res) => {
-    try {
-        const { employeeId, year } = req.params;
+// app.get('/api/leaves/balance/:employeeId/:year', async (req, res) => {
+//     try {
+//         const { employeeId, year } = req.params;
 
-        const [balance] = await db.query(
-            'SELECT * FROM leave_balances WHERE employee_id = ? AND year = ?',
-            [employeeId, year]
-        );
+//         const [balance] = await db.query(
+//             'SELECT * FROM leave_balances WHERE employee_id = ? AND year = ?',
+//             [employeeId, year]
+//         );
 
-        if (balance.length > 0) {
-            res.json({
-                employee_id: employeeId,
-                year: parseInt(year),
-                total_accrued: parseFloat(balance[0].total_accrued) || 12,
-                used: parseFloat(balance[0].used) || 0,
-                pending: parseFloat(balance[0].pending) || 0,
-                available: parseFloat(balance[0].available) || 12,
-                carry_forward: parseFloat(balance[0].carry_forward) || 0
-            });
-        } else {
-            res.status(404).json({
-                success: false,
-                message: 'No leave balance found for this year'
-            });
-        }
+//         if (balance.length > 0) {
+//             res.json({
+//                 employee_id: employeeId,
+//                 year: parseInt(year),
+//                 total_accrued: parseFloat(balance[0].total_accrued) || 12,
+//                 used: parseFloat(balance[0].used) || 0,
+//                 pending: parseFloat(balance[0].pending) || 0,
+//                 available: parseFloat(balance[0].available) || 12,
+//                 carry_forward: parseFloat(balance[0].carry_forward) || 0
+//             });
+//         } else {
+//             res.status(404).json({
+//                 success: false,
+//                 message: 'No leave balance found for this year'
+//             });
+//         }
 
-    } catch (error) {
-        console.error('Error fetching leave balance:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch leave balance',
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('Error fetching leave balance:', error);
+//         res.status(500).json({
+//             success: false,
+//             message: 'Failed to fetch leave balance',
+//             error: error.message
+//         });
+//     }
+// });
 
 // Create leave request
-app.post('/api/leaves', async (req, res) => {
-    try {
-        const leaveData = req.body;
-        const currentYear = new Date().getFullYear();
+// app.post('/api/leaves', async (req, res) => {
+//     try {
+//         const leaveData = req.body;
+//         const currentYear = new Date().getFullYear();
 
-        console.log('Creating leave request:', leaveData);
+//         console.log('Creating leave request:', leaveData);
 
-        // Start transaction
-        const connection = await db.getConnection();
-        await connection.beginTransaction();
+//         // Start transaction
+//         const connection = await db.getConnection();
+//         await connection.beginTransaction();
 
-        try {
-            // Insert leave request
-            const [result] = await connection.query(
-                `INSERT INTO leaves (
-                    employee_id, leave_type, leave_duration, half_day_type,
-                    start_date, end_date, reason, reporting_manager, days_count, year
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    leaveData.employee_id,
-                    leaveData.leave_type,
-                    leaveData.leave_duration,
-                    leaveData.half_day_type || null,
-                    leaveData.start_date,
-                    leaveData.end_date,
-                    leaveData.reason,
-                    leaveData.reporting_manager || null,
-                    leaveData.days_count || 1,
-                    currentYear
-                ]
-            );
+//         try {
+//             // Insert leave request
+//             const [result] = await connection.query(
+//                 `INSERT INTO leaves (
+//                     employee_id, leave_type, leave_duration, half_day_type,
+//                     start_date, end_date, reason, reporting_manager, days_count, year
+//                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                 [
+//                     leaveData.employee_id,
+//                     leaveData.leave_type,
+//                     leaveData.leave_duration,
+//                     leaveData.half_day_type || null,
+//                     leaveData.start_date,
+//                     leaveData.end_date,
+//                     leaveData.reason,
+//                     leaveData.reporting_manager || null,
+//                     leaveData.days_count || 1,
+//                     currentYear
+//                 ]
+//             );
 
-            // Update leave balance pending count
-            await connection.query(
-                `UPDATE leave_balances 
-                 SET pending = pending + ? 
-                 WHERE employee_id = ? AND year = ?`,
-                [leaveData.days_count || 1, leaveData.employee_id, currentYear]
-            );
+//             // Update leave balance pending count
+//             await connection.query(
+//                 `UPDATE leave_balances 
+//                  SET pending = pending + ? 
+//                  WHERE employee_id = ? AND year = ?`,
+//                 [leaveData.days_count || 1, leaveData.employee_id, currentYear]
+//             );
 
-            await connection.commit();
-            connection.release();
+//             await connection.commit();
+//             connection.release();
 
-            res.status(201).json({
-                success: true,
-                message: 'Leave request submitted successfully',
-                leaveId: result.insertId
-            });
+//             res.status(201).json({
+//                 success: true,
+//                 message: 'Leave request submitted successfully',
+//                 leaveId: result.insertId
+//             });
 
-        } catch (error) {
-            await connection.rollback();
-            connection.release();
-            throw error;
-        }
+//         } catch (error) {
+//             await connection.rollback();
+//             connection.release();
+//             throw error;
+//         }
 
-    } catch (error) {
-        console.error('Error creating leave request:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to submit leave request',
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('Error creating leave request:', error);
+//         res.status(500).json({
+//             success: false,
+//             message: 'Failed to submit leave request',
+//             error: error.message
+//         });
+//     }
+// });
 
 // Update leave status
-app.put('/api/leaves/:id/status', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status, comments } = req.body;
+// app.put('/api/leaves/:id/status', async (req, res) => {
+//     try {
+//         const { id } = req.params;
+//         const { status, comments } = req.body;
 
-        const connection = await db.getConnection();
-        await connection.beginTransaction();
+//         const connection = await db.getConnection();
+//         await connection.beginTransaction();
 
-        try {
-            // Get leave details
-            const [leaves] = await connection.query('SELECT * FROM leaves WHERE id = ?', [id]);
+//         try {
+//             // Get leave details
+//             const [leaves] = await connection.query('SELECT * FROM leaves WHERE id = ?', [id]);
 
-            if (leaves.length === 0) {
-                await connection.rollback();
-                connection.release();
-                return res.status(404).json({ message: 'Leave request not found' });
-            }
+//             if (leaves.length === 0) {
+//                 await connection.rollback();
+//                 connection.release();
+//                 return res.status(404).json({ message: 'Leave request not found' });
+//             }
 
-            const leave = leaves[0];
-            const leaveYear = new Date(leave.start_date).getFullYear();
+//             const leave = leaves[0];
+//             const leaveYear = new Date(leave.start_date).getFullYear();
 
-            // Update leave status
-            await connection.query(
-                `UPDATE leaves SET status = ?, admin_comments = ? WHERE id = ?`,
-                [status, comments || null, id]
-            );
+//             // Update leave status
+//             await connection.query(
+//                 `UPDATE leaves SET status = ?, admin_comments = ? WHERE id = ?`,
+//                 [status, comments || null, id]
+//             );
 
-            // Update leave balance
-            if (status === 'approved') {
-                await connection.query(
-                    `UPDATE leave_balances 
-                     SET used = used + ?, pending = pending - ? 
-                     WHERE employee_id = ? AND year = ?`,
-                    [leave.days_count, leave.days_count, leave.employee_id, leaveYear]
-                );
-            } else if (status === 'rejected') {
-                await connection.query(
-                    `UPDATE leave_balances 
-                     SET pending = pending - ? 
-                     WHERE employee_id = ? AND year = ?`,
-                    [leave.days_count, leave.employee_id, leaveYear]
-                );
-            }
+//             // Update leave balance
+//             if (status === 'approved') {
+//                 await connection.query(
+//                     `UPDATE leave_balances 
+//                      SET used = used + ?, pending = pending - ? 
+//                      WHERE employee_id = ? AND year = ?`,
+//                     [leave.days_count, leave.days_count, leave.employee_id, leaveYear]
+//                 );
+//             } else if (status === 'rejected') {
+//                 await connection.query(
+//                     `UPDATE leave_balances 
+//                      SET pending = pending - ? 
+//                      WHERE employee_id = ? AND year = ?`,
+//                     [leave.days_count, leave.employee_id, leaveYear]
+//                 );
+//             }
 
-            await connection.commit();
-            connection.release();
+//             await connection.commit();
+//             connection.release();
 
-            res.json({
-                success: true,
-                message: `Leave request ${status} successfully`
-            });
+//             res.json({
+//                 success: true,
+//                 message: `Leave request ${status} successfully`
+//             });
 
-        } catch (error) {
-            await connection.rollback();
-            connection.release();
-            throw error;
-        }
+//         } catch (error) {
+//             await connection.rollback();
+//             connection.release();
+//             throw error;
+//         }
 
-    } catch (error) {
-        console.error('Error updating leave status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update leave status',
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('Error updating leave status:', error);
+//         res.status(500).json({
+//             success: false,
+//             message: 'Failed to update leave status',
+//             error: error.message
+//         });
+//     }
+// });
+
+const leaveRoutes = require('./routes/leaveRoutes');
+app.use('/api/leaves', leaveRoutes);
 
 // ============== ATTENDANCE ROUTES ==============
 
 // Get attendance report
-app.get('/api/attendance/report', async (req, res) => {
-    try {
-        const { start, end, employee_id } = req.query;
+// app.get('/api/attendance/report', async (req, res) => {
+//     try {
+//         const { start, end, employee_id } = req.query;
 
-        let query = `
-            SELECT a.*, e.first_name, e.last_name, e.department 
-            FROM attendance a
-            JOIN employees e ON a.employee_id = e.employee_id
-            WHERE a.attendance_date BETWEEN ? AND ?
-        `;
+//         let query = `
+//             SELECT a.*, e.first_name, e.last_name, e.department 
+//             FROM attendance a
+//             JOIN employees e ON a.employee_id = e.employee_id
+//             WHERE a.attendance_date BETWEEN ? AND ?
+//         `;
 
-        const params = [start, end];
+//         const params = [start, end];
 
-        if (employee_id) {
-            query += ' AND a.employee_id = ?';
-            params.push(employee_id);
-        }
+//         if (employee_id) {
+//             query += ' AND a.employee_id = ?';
+//             params.push(employee_id);
+//         }
 
-        query += ' ORDER BY a.attendance_date DESC, e.first_name';
+//         query += ' ORDER BY a.attendance_date DESC, e.first_name';
 
-        const [rows] = await db.query(query, params);
+//         const [rows] = await db.query(query, params);
 
-        // Add formatted late display (min/sec) to each record
-        rows.forEach(r => {
-            const lateMinutes = parseFloat(r.late_minutes) || 0;
-            if (lateMinutes > 0) {
-                const lateSeconds = Math.round(lateMinutes * 60);
-                const hours = Math.floor(lateSeconds / 3600);
-                const remaining = lateSeconds % 3600;
-                const mins = Math.floor(remaining / 60);
-                const secs = remaining % 60;
-                const parts = [];
-                if (hours > 0) parts.push(`${hours}h`);
-                if (mins > 0) parts.push(`${mins}m`);
-                if (secs > 0) parts.push(`${secs}s`);
-                r.late_display = parts.length > 0 ? parts.join(' ') : '0s';
-            } else {
-                r.late_display = null;
-            }
-        });
+//         // Add formatted late display (min/sec) to each record
+//         rows.forEach(r => {
+//             const lateMinutes = parseFloat(r.late_minutes) || 0;
+//             if (lateMinutes > 0) {
+//                 const lateSeconds = Math.round(lateMinutes * 60);
+//                 const hours = Math.floor(lateSeconds / 3600);
+//                 const remaining = lateSeconds % 3600;
+//                 const mins = Math.floor(remaining / 60);
+//                 const secs = remaining % 60;
+//                 const parts = [];
+//                 if (hours > 0) parts.push(`${hours}h`);
+//                 if (mins > 0) parts.push(`${mins}m`);
+//                 if (secs > 0) parts.push(`${secs}s`);
+//                 r.late_display = parts.length > 0 ? parts.join(' ') : '0s';
+//             } else {
+//                 r.late_display = null;
+//             }
+//         });
 
-        // Calculate stats
-        const stats = {
-            total: rows.length,
-            present: rows.filter(r => r.status === 'present').length,
-            half_day: rows.filter(r => r.status === 'half_day').length,
-            absent: rows.filter(r => r.status === 'absent').length,
-            on_leave: rows.filter(r => r.status === 'on_leave').length,
-            working: rows.filter(r => r.status === 'working').length,
-            late: rows.filter(r => parseFloat(r.late_minutes) > 0).length
-        };
+//         // Calculate stats
+//         const stats = {
+//             total: rows.length,
+//             present: rows.filter(r => r.status === 'present').length,
+//             half_day: rows.filter(r => r.status === 'half_day').length,
+//             absent: rows.filter(r => r.status === 'absent').length,
+//             on_leave: rows.filter(r => r.status === 'on_leave').length,
+//             working: rows.filter(r => r.status === 'working').length,
+//             late: rows.filter(r => parseFloat(r.late_minutes) > 0).length
+//         };
 
-        res.json({
-            success: true,
-            attendance: rows,
-            stats
-        });
+//         res.json({
+//             success: true,
+//             attendance: rows,
+//             stats
+//         });
 
-    } catch (error) {
-        console.error('❌ Error fetching attendance:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('❌ Error fetching attendance:', error);
+//         res.status(500).json({
+//             success: false,
+//             error: error.message
+//         });
+//     }
+// });
 
 // Get today's attendance for employee
-app.get('/api/attendance/today/:employee_id', async (req, res) => {
-    try {
-        const { employee_id } = req.params;
-        const today = new Date().toISOString().split('T')[0];
+// app.get('/api/attendance/today/:employee_id', async (req, res) => {
+//     try {
+//         const { employee_id } = req.params;
+//         const today = new Date().toISOString().split('T')[0];
 
-        console.log('Getting attendance for:', employee_id, today);
+//         console.log('Getting attendance for:', employee_id, today);
 
-        // Check if employee exists
-        const [employee] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employee_id]
-        );
+//         // Check if employee exists
+//         const [employee] = await db.query(
+//             'SELECT * FROM employees WHERE employee_id = ?',
+//             [employee_id]
+//         );
 
-        if (employee.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Employee not found'
-            });
-        }
+//         if (employee.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: 'Employee not found'
+//             });
+//         }
 
-        // Check for today's attendance
-        const [todayAttendance] = await db.query(
-            `SELECT a.*, e.first_name, e.last_name, e.shift_timing 
-             FROM attendance a
-             JOIN employees e ON a.employee_id = e.employee_id
-             WHERE a.employee_id = ? AND a.attendance_date = ?`,
-            [employee_id, today]
-        );
+//         // Check for today's attendance
+//         const [todayAttendance] = await db.query(
+//             `SELECT a.*, e.first_name, e.last_name, e.shift_timing 
+//              FROM attendance a
+//              JOIN employees e ON a.employee_id = e.employee_id
+//              WHERE a.employee_id = ? AND a.attendance_date = ?`,
+//             [employee_id, today]
+//         );
 
-        // Check for any incomplete attendance from previous days
-        const [incompleteAttendance] = await db.query(
-            `SELECT a.*, e.first_name, e.last_name, e.shift_timing 
-             FROM attendance a
-             JOIN employees e ON a.employee_id = e.employee_id
-             WHERE a.employee_id = ? 
-             AND a.clock_in IS NOT NULL 
-             AND a.clock_out IS NULL
-             ORDER BY a.attendance_date DESC
-             LIMIT 1`,
-            [employee_id]
-        );
+//         // Check for any incomplete attendance from previous days
+//         const [incompleteAttendance] = await db.query(
+//             `SELECT a.*, e.first_name, e.last_name, e.shift_timing 
+//              FROM attendance a
+//              JOIN employees e ON a.employee_id = e.employee_id
+//              WHERE a.employee_id = ? 
+//              AND a.clock_in IS NOT NULL 
+//              AND a.clock_out IS NULL
+//              ORDER BY a.attendance_date DESC
+//              LIMIT 1`,
+//             [employee_id]
+//         );
 
-        const [activeSession] = await db.query(
-            'SELECT * FROM attendance_sessions WHERE employee_id = ? AND is_active = true',
-            [employee_id]
-        );
+//         const [activeSession] = await db.query(
+//             'SELECT * FROM attendance_sessions WHERE employee_id = ? AND is_active = true',
+//             [employee_id]
+//         );
 
-        // Determine which attendance to show
-        let formattedAttendance = null;
-        let hasPreviousIncomplete = false;
+//         // Determine which attendance to show
+//         let formattedAttendance = null;
+//         let hasPreviousIncomplete = false;
 
-        if (incompleteAttendance.length > 0) {
-            // There's an incomplete attendance from previous day
-            formattedAttendance = { ...incompleteAttendance[0] };
-            hasPreviousIncomplete = true;
+//         if (incompleteAttendance.length > 0) {
+//             // There's an incomplete attendance from previous day
+//             formattedAttendance = { ...incompleteAttendance[0] };
+//             hasPreviousIncomplete = true;
 
-            // Calculate hours so far
-            const clockIn = new Date(formattedAttendance.clock_in);
-            const now = new Date();
-            const hoursSoFar = (now - clockIn) / (1000 * 60 * 60);
-            formattedAttendance.hours_so_far = hoursSoFar.toFixed(2);
-            formattedAttendance.is_previous_day = true;
+//             // Calculate hours so far
+//             const clockIn = new Date(formattedAttendance.clock_in);
+//             const now = new Date();
+//             const hoursSoFar = (now - clockIn) / (1000 * 60 * 60);
+//             formattedAttendance.hours_so_far = hoursSoFar.toFixed(2);
+//             formattedAttendance.is_previous_day = true;
 
-            console.log(`⚠️ Found incomplete attendance from ${formattedAttendance.attendance_date}`);
+//             console.log(`⚠️ Found incomplete attendance from ${formattedAttendance.attendance_date}`);
 
-        } else if (todayAttendance.length > 0) {
-            // Normal today's attendance
-            formattedAttendance = { ...todayAttendance[0] };
+//         } else if (todayAttendance.length > 0) {
+//             // Normal today's attendance
+//             formattedAttendance = { ...todayAttendance[0] };
 
-            if (formattedAttendance.clock_out) {
-                const totalHours = parseFloat(formattedAttendance.total_hours) || 0;
+//             if (formattedAttendance.clock_out) {
+//                 const totalHours = parseFloat(formattedAttendance.total_hours) || 0;
 
-                if (totalHours >= 8) {
-                    formattedAttendance.status = 'present';
-                } else if (totalHours >= 4 && totalHours < 8) {
-                    formattedAttendance.status = 'half_day';
-                } else if (totalHours > 0 && totalHours < 4) {
-                    formattedAttendance.status = 'absent';
-                }
-            } else {
-                // Currently working
-                const clockIn = new Date(formattedAttendance.clock_in);
-                const now = new Date();
-                const currentHours = (now - clockIn) / (1000 * 60 * 60);
-                formattedAttendance.current_hours = currentHours.toFixed(2);
-            }
+//                 if (totalHours >= 8) {
+//                     formattedAttendance.status = 'present';
+//                 } else if (totalHours >= 4 && totalHours < 8) {
+//                     formattedAttendance.status = 'half_day';
+//                 } else if (totalHours > 0 && totalHours < 4) {
+//                     formattedAttendance.status = 'absent';
+//                 }
+//             } else {
+//                 // Currently working
+//                 const clockIn = new Date(formattedAttendance.clock_in);
+//                 const now = new Date();
+//                 const currentHours = (now - clockIn) / (1000 * 60 * 60);
+//                 formattedAttendance.current_hours = currentHours.toFixed(2);
+//             }
 
-            // Calculate late display if applicable
-            if (formattedAttendance.late_minutes > 0) {
-                const lateSeconds = Math.round(formattedAttendance.late_minutes * 60);
-                formattedAttendance.late_display = lateSeconds < 60 ?
-                    `${lateSeconds}s` :
-                    `${Math.floor(lateSeconds / 60)}m ${lateSeconds % 60}s`;
-            }
-        }
+//             // Calculate late display if applicable
+//             if (formattedAttendance.late_minutes > 0) {
+//                 const lateSeconds = Math.round(formattedAttendance.late_minutes * 60);
+//                 formattedAttendance.late_display = lateSeconds < 60 ?
+//                     `${lateSeconds}s` :
+//                     `${Math.floor(lateSeconds / 60)}m ${lateSeconds % 60}s`;
+//             }
+//         }
 
-        res.json({
-            success: true,
-            attendance: formattedAttendance,
-            active_session: activeSession[0] || null,
-            has_previous_incomplete: hasPreviousIncomplete,
-            message: hasPreviousIncomplete ?
-                `You have an incomplete attendance from ${formattedAttendance?.attendance_date}. Please clock out.` :
-                undefined
-        });
+//         res.json({
+//             success: true,
+//             attendance: formattedAttendance,
+//             active_session: activeSession[0] || null,
+//             has_previous_incomplete: hasPreviousIncomplete,
+//             message: hasPreviousIncomplete ?
+//                 `You have an incomplete attendance from ${formattedAttendance?.attendance_date}. Please clock out.` :
+//                 undefined
+//         });
 
-    } catch (error) {
-        console.error('Error getting attendance:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to get attendance',
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('Error getting attendance:', error);
+//         res.status(500).json({
+//             success: false,
+//             message: 'Failed to get attendance',
+//             error: error.message
+//         });
+//     }
+// });
 
 // Clock in
-app.post('/api/attendance/clock-in', async (req, res) => {
-    try {
-        const { employee_id, latitude, longitude } = req.body;
-        const now = new Date();
-        const today = now.toISOString().split('T')[0];
+// app.post('/api/attendance/clock-in', async (req, res) => {
+//     try {
+//         const { employee_id, latitude, longitude } = req.body;
+//         const now = new Date();
+//         const today = now.toISOString().split('T')[0];
 
-        // Check if employee exists
-        const [employee] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employee_id]
-        );
+//         // Check if employee exists
+//         const [employee] = await db.query(
+//             'SELECT * FROM employees WHERE employee_id = ?',
+//             [employee_id]
+//         );
 
-        if (employee.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Employee not found'
-            });
-        }
+//         if (employee.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: 'Employee not found'
+//             });
+//         }
 
-        // Check if already clocked in today
-        const [existing] = await db.query(
-            'SELECT * FROM attendance WHERE employee_id = ? AND attendance_date = ?',
-            [employee_id, today]
-        );
+//         // Check if already clocked in today
+//         const [existing] = await db.query(
+//             'SELECT * FROM attendance WHERE employee_id = ? AND attendance_date = ?',
+//             [employee_id, today]
+//         );
 
-        if (existing.length > 0 && existing[0].clock_in && !existing[0].clock_out) {
-            return res.status(400).json({
-                success: false,
-                message: 'Already clocked in today'
-            });
-        }
+//         if (existing.length > 0 && existing[0].clock_in && !existing[0].clock_out) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: 'Already clocked in today'
+//             });
+//         }
 
-        // Get employee shift timing
-        const shiftTiming = employee[0]?.shift_timing || '9:00 AM - 6:00 PM';
+//         // Get employee shift timing
+//         const shiftTiming = employee[0]?.shift_timing || '9:00 AM - 6:00 PM';
 
-        // Calculate late minutes based on shift start
-        let lateMinutes = 0;
-        let lateDisplay = null;
-        const shiftStart = parseShiftStart(shiftTiming);
+//         // Calculate late minutes based on shift start
+//         let lateMinutes = 0;
+//         let lateDisplay = null;
+//         const shiftStart = parseShiftStart(shiftTiming);
 
-        if (shiftStart) {
-            const shiftStartTime = new Date(now);
-            shiftStartTime.setHours(shiftStart.hour, shiftStart.minute, 0, 0);
-            const diffMs = now - shiftStartTime;
-            if (diffMs > 0) {
-                lateMinutes = diffMs / (1000 * 60);
-                const lateSeconds = Math.round(lateMinutes * 60);
-                const hours = Math.floor(lateSeconds / 3600);
-                const remaining = lateSeconds % 3600;
-                const mins = Math.floor(remaining / 60);
-                const secs = remaining % 60;
-                const parts = [];
-                if (hours > 0) parts.push(`${hours}h`);
-                if (mins > 0) parts.push(`${mins}m`);
-                if (secs > 0) parts.push(`${secs}s`);
-                lateDisplay = parts.length > 0 ? parts.join(' ') : '0s';
-            }
-        }
+//         if (shiftStart) {
+//             const shiftStartTime = new Date(now);
+//             shiftStartTime.setHours(shiftStart.hour, shiftStart.minute, 0, 0);
+//             const diffMs = now - shiftStartTime;
+//             if (diffMs > 0) {
+//                 lateMinutes = diffMs / (1000 * 60);
+//                 const lateSeconds = Math.round(lateMinutes * 60);
+//                 const hours = Math.floor(lateSeconds / 3600);
+//                 const remaining = lateSeconds % 3600;
+//                 const mins = Math.floor(remaining / 60);
+//                 const secs = remaining % 60;
+//                 const parts = [];
+//                 if (hours > 0) parts.push(`${hours}h`);
+//                 if (mins > 0) parts.push(`${mins}m`);
+//                 if (secs > 0) parts.push(`${secs}s`);
+//                 lateDisplay = parts.length > 0 ? parts.join(' ') : '0s';
+//             }
+//         }
 
-        const sessionId = generateSessionId();
+//         const sessionId = generateSessionId();
 
-        if (existing.length > 0) {
-            // Update existing record
-            await db.query(
-                `UPDATE attendance 
-                 SET clock_in = ?, late_minutes = ?, latitude = ?, longitude = ?, session_id = ?
-                 WHERE employee_id = ? AND attendance_date = ?`,
-                [now, lateMinutes, latitude, longitude, sessionId, employee_id, today]
-            );
-        } else {
-            // Insert new record
-            await db.query(
-                `INSERT INTO attendance 
-                 (employee_id, attendance_date, clock_in, late_minutes, latitude, longitude, shift_time_used, session_id) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [employee_id, today, now, lateMinutes, latitude, longitude, shiftTiming, sessionId]
-            );
-        }
+//         if (existing.length > 0) {
+//             // Update existing record
+//             await db.query(
+//                 `UPDATE attendance 
+//                  SET clock_in = ?, late_minutes = ?, latitude = ?, longitude = ?, session_id = ?
+//                  WHERE employee_id = ? AND attendance_date = ?`,
+//                 [now, lateMinutes, latitude, longitude, sessionId, employee_id, today]
+//             );
+//         } else {
+//             // Insert new record
+//             await db.query(
+//                 `INSERT INTO attendance 
+//                  (employee_id, attendance_date, clock_in, late_minutes, latitude, longitude, shift_time_used, session_id) 
+//                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+//                 [employee_id, today, now, lateMinutes, latitude, longitude, shiftTiming, sessionId]
+//             );
+//         }
 
-        // Create active session
-        await db.query(
-            `INSERT INTO attendance_sessions 
-             (employee_id, session_id, clock_in_time, last_heartbeat, is_active) 
-             VALUES (?, ?, ?, ?, true)
-             ON DUPLICATE KEY UPDATE
-             last_heartbeat = NOW(), is_active = true`,
-            [employee_id, sessionId, now, now]
-        );
+//         // Create active session
+//         await db.query(
+//             `INSERT INTO attendance_sessions 
+//              (employee_id, session_id, clock_in_time, last_heartbeat, is_active) 
+//              VALUES (?, ?, ?, ?, true)
+//              ON DUPLICATE KEY UPDATE
+//              last_heartbeat = NOW(), is_active = true`,
+//             [employee_id, sessionId, now, now]
+//         );
 
-        res.json({
-            success: true,
-            message: lateMinutes > 0 ? 'Clocked in (late)' : 'Clocked in successfully',
-            clock_in: now,
-            late_minutes: lateMinutes,
-            late_display: lateDisplay,
-            status: 'working',
-            session_id: sessionId
-        });
+//         res.json({
+//             success: true,
+//             message: lateMinutes > 0 ? 'Clocked in (late)' : 'Clocked in successfully',
+//             clock_in: now,
+//             late_minutes: lateMinutes,
+//             late_display: lateDisplay,
+//             status: 'working',
+//             session_id: sessionId
+//         });
 
-    } catch (error) {
-        console.error('❌ Error clocking in:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to clock in',
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('❌ Error clocking in:', error);
+//         res.status(500).json({
+//             success: false,
+//             message: 'Failed to clock in',
+//             error: error.message
+//         });
+//     }
+// });
 
 // Clock out
-app.post('/api/attendance/clock-out', async (req, res) => {
-    try {
-        const { employee_id, latitude, longitude } = req.body;
-        const now = new Date();
-        const today = now.toISOString().split('T')[0];
+// app.post('/api/attendance/clock-out', async (req, res) => {
+//     try {
+//         const { employee_id, latitude, longitude } = req.body;
+//         const now = new Date();
+//         const today = now.toISOString().split('T')[0];
 
-        // Check if employee exists
-        const [employee] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employee_id]
-        );
+//         // Check if employee exists
+//         const [employee] = await db.query(
+//             'SELECT * FROM employees WHERE employee_id = ?',
+//             [employee_id]
+//         );
 
-        if (employee.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Employee not found'
-            });
-        }
+//         if (employee.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: 'Employee not found'
+//             });
+//         }
 
-        // Find any incomplete attendance (from any day)
-        const [incompleteAttendance] = await db.query(
-            `SELECT * FROM attendance 
-             WHERE employee_id = ? 
-             AND clock_in IS NOT NULL 
-             AND clock_out IS NULL 
-             ORDER BY attendance_date ASC 
-             LIMIT 1`,
-            [employee_id]
-        );
+//         // Find any incomplete attendance (from any day)
+//         const [incompleteAttendance] = await db.query(
+//             `SELECT * FROM attendance 
+//              WHERE employee_id = ? 
+//              AND clock_in IS NOT NULL 
+//              AND clock_out IS NULL 
+//              ORDER BY attendance_date ASC 
+//              LIMIT 1`,
+//             [employee_id]
+//         );
 
-        let attendanceRecord = null;
-        let activeSession = null;
+//         let attendanceRecord = null;
+//         let activeSession = null;
 
-        if (incompleteAttendance.length > 0) {
-            attendanceRecord = incompleteAttendance[0];
+//         if (incompleteAttendance.length > 0) {
+//             attendanceRecord = incompleteAttendance[0];
 
-            // Find associated session
-            if (attendanceRecord.session_id) {
-                const [sessions] = await db.query(
-                    'SELECT * FROM attendance_sessions WHERE session_id = ? AND is_active = true',
-                    [attendanceRecord.session_id]
-                );
-                if (sessions.length > 0) {
-                    activeSession = sessions[0];
-                }
-            }
-        } else {
-            // Check for today's active session
-            const [sessions] = await db.query(
-                'SELECT * FROM attendance_sessions WHERE employee_id = ? AND is_active = true ORDER BY clock_in_time DESC LIMIT 1',
-                [employee_id]
-            );
-            if (sessions.length > 0) {
-                activeSession = sessions[0];
+//             // Find associated session
+//             if (attendanceRecord.session_id) {
+//                 const [sessions] = await db.query(
+//                     'SELECT * FROM attendance_sessions WHERE session_id = ? AND is_active = true',
+//                     [attendanceRecord.session_id]
+//                 );
+//                 if (sessions.length > 0) {
+//                     activeSession = sessions[0];
+//                 }
+//             }
+//         } else {
+//             // Check for today's active session
+//             const [sessions] = await db.query(
+//                 'SELECT * FROM attendance_sessions WHERE employee_id = ? AND is_active = true ORDER BY clock_in_time DESC LIMIT 1',
+//                 [employee_id]
+//             );
+//             if (sessions.length > 0) {
+//                 activeSession = sessions[0];
 
-                // Get attendance for that session date
-                const sessionDate = new Date(activeSession.clock_in_time).toISOString().split('T')[0];
-                const [attendance] = await db.query(
-                    'SELECT * FROM attendance WHERE employee_id = ? AND attendance_date = ?',
-                    [employee_id, sessionDate]
-                );
-                if (attendance.length > 0) {
-                    attendanceRecord = attendance[0];
-                }
-            }
-        }
+//                 // Get attendance for that session date
+//                 const sessionDate = new Date(activeSession.clock_in_time).toISOString().split('T')[0];
+//                 const [attendance] = await db.query(
+//                     'SELECT * FROM attendance WHERE employee_id = ? AND attendance_date = ?',
+//                     [employee_id, sessionDate]
+//                 );
+//                 if (attendance.length > 0) {
+//                     attendanceRecord = attendance[0];
+//                 }
+//             }
+//         }
 
-        if (!attendanceRecord) {
-            return res.status(400).json({
-                success: false,
-                message: 'No active clock-in found. Please clock in first.'
-            });
-        }
+//         if (!attendanceRecord) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: 'No active clock-in found. Please clock in first.'
+//             });
+//         }
 
-        // Calculate total hours worked
-        const clockIn = new Date(attendanceRecord.clock_in);
-        const totalHours = (now - clockIn) / (1000 * 60 * 60);
+//         // Calculate total hours worked
+//         const clockIn = new Date(attendanceRecord.clock_in);
+//         const totalHours = (now - clockIn) / (1000 * 60 * 60);
 
-        // Determine status (>=9h Present, >=5h Half Day, <5h Absent)
-        let status = 'present';
-        if (totalHours < 5) {
-            status = 'absent';
-        } else if (totalHours < 9) {
-            status = 'half_day';
-        }
+//         // Determine status (>=9h Present, >=5h Half Day, <5h Absent)
+//         let status = 'present';
+//         if (totalHours < 5) {
+//             status = 'absent';
+//         } else if (totalHours < 9) {
+//             status = 'half_day';
+//         }
 
-        const clockInDate = clockIn.toISOString().split('T')[0];
-        const isNextDay = clockInDate !== today;
+//         const clockInDate = clockIn.toISOString().split('T')[0];
+//         const isNextDay = clockInDate !== today;
 
-        // Update attendance
-        await db.query(
-            `UPDATE attendance 
-             SET clock_out = ?, total_hours = ?, status = ?, latitude = ?, longitude = ?
-             WHERE id = ?`,
-            [now, totalHours.toFixed(2), status, latitude, longitude, attendanceRecord.id]
-        );
+//         // Update attendance
+//         await db.query(
+//             `UPDATE attendance 
+//              SET clock_out = ?, total_hours = ?, status = ?, latitude = ?, longitude = ?
+//              WHERE id = ?`,
+//             [now, totalHours.toFixed(2), status, latitude, longitude, attendanceRecord.id]
+//         );
 
-        // Deactivate session if exists
-        if (activeSession) {
-            await db.query(
-                `UPDATE attendance_sessions 
-                 SET is_active = false, clock_out_time = ?
-                 WHERE id = ?`,
-                [now, activeSession.id]
-            );
-        }
+//         // Deactivate session if exists
+//         if (activeSession) {
+//             await db.query(
+//                 `UPDATE attendance_sessions 
+//                  SET is_active = false, clock_out_time = ?
+//                  WHERE id = ?`,
+//                 [now, activeSession.id]
+//             );
+//         }
 
-        const dateMessage = isNextDay ? ` for ${clockInDate}` : '';
+//         const dateMessage = isNextDay ? ` for ${clockInDate}` : '';
 
-        res.json({
-            success: true,
-            message: `Clocked out successfully${dateMessage}.`,
-            clock_out: now,
-            attendance_date: clockInDate,
-            total_hours: totalHours.toFixed(2),
-            status,
-            is_next_day: isNextDay
-        });
+//         res.json({
+//             success: true,
+//             message: `Clocked out successfully${dateMessage}.`,
+//             clock_out: now,
+//             attendance_date: clockInDate,
+//             total_hours: totalHours.toFixed(2),
+//             status,
+//             is_next_day: isNextDay
+//         });
 
-    } catch (error) {
-        console.error('❌ Error clocking out:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to clock out',
-            error: error.message
-        });
-    }
-});
+//     } catch (error) {
+//         console.error('❌ Error clocking out:', error);
+//         res.status(500).json({
+//             success: false,
+//             message: 'Failed to clock out',
+//             error: error.message
+//         });
+//     }
+// });
+
+const attendanceRoutes = require('./routes/attendanceRoutes');
+app.use('/api/attendance', attendanceRoutes);
 
 // ============== NOTIFICATION ROUTES ==============
 
@@ -1464,6 +1527,27 @@ app.get('/api/notifications', async (req, res) => {
         console.error('❌ Error fetching notifications:', error);
         res.status(500).json({ error: error.message });
     }
+});
+
+// DELETE notification
+app.delete('/api/notifications/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    await db.query('DELETE FROM notifications WHERE id = ?', [id]);
+    
+    res.json({
+      success: true,
+      message: 'Notification deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete notification',
+      error: error.message
+    });
+  }
 });
 
 // Mark notification as read

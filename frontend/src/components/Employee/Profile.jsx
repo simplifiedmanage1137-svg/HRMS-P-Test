@@ -273,19 +273,19 @@ const Profile = () => {
                                             </Col>
                                             <Col md={6}>
                                                 <div className="d-flex mb-1">
-                                                    <span className="text-muted small" style={{ minWidth: '100px' }}>Joining Date:</span>
+                                                    <span className="text-muted small" style={{ minWidth: '130px' }}>Joining Date:</span>
                                                     <span className="small">{formatDate(employee.joining_date)}</span>
                                                 </div>
                                                 <div className="d-flex mb-1">
-                                                    <span className="text-muted small" style={{ minWidth: '100px' }}>Reporting Manager:</span>
+                                                    <span className="text-muted small" style={{ minWidth: '130px' }}>Reporting Manager:</span>
                                                     <span className="small">{employee.reporting_manager || 'N/A'}</span>
                                                 </div>
                                                 <div className="d-flex mb-1">
-                                                    <span className="text-muted small" style={{ minWidth: '100px' }}>Employment Type:</span>
+                                                    <span className="text-muted small" style={{ minWidth: '130px' }}>Employment Type:</span>
                                                     <span className="small">{employee.employment_type}</span>
                                                 </div>
                                                 <div className="d-flex mb-1">
-                                                    <span className="text-muted small" style={{ minWidth: '100px' }}>Shift Timing:</span>
+                                                    <span className="text-muted small" style={{ minWidth: '130px' }}>Shift Timing:</span>
                                                     <span className="small">{employee.shift_timing || '9:00 AM - 6:00 PM'}</span>
                                                 </div>
                                             </Col>

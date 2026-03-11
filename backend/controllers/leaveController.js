@@ -1,6 +1,8 @@
 const LeaveYearlyService = require('../services/leaveYearlyService');
 const db = require('../config/database');
 
+
+
 // Get leave balance for employee
 exports.getLeaveBalance = async (req, res) => {
     try {
@@ -29,21 +31,55 @@ exports.getLeaveBalance = async (req, res) => {
         }
 
         const today = new Date();
+        const joiningDate = new Date(employee[0].joining_date);
+
+        console.log('Joining Date:', employee[0].joining_date);
+        console.log('Current Date:', today);
+
+        // ===== CORRECT ELIGIBILITY CALCULATION =====
+        // Calculate total months from joining date (not calendar year based)
+        let totalMonths = (today.getFullYear() - joiningDate.getFullYear()) * 12 
+                        + (today.getMonth() - joiningDate.getMonth());
+        
+        // Adjust for day of month
+        if (today.getDate() < joiningDate.getDate()) {
+            totalMonths -= 1;
+        }
+        
+        // Ensure not negative
+        totalMonths = Math.max(0, totalMonths);
+
+        // Calculate eligibility based on joining date + 6 months
+        const sixMonthsFromJoining = new Date(joiningDate);
+        sixMonthsFromJoining.setMonth(sixMonthsFromJoining.getMonth() + 6);
+        
+        // Check if today is on or after the eligibility date
+        const isEligibleToApply = today >= sixMonthsFromJoining;
+
+        // Format eligible from date (joining date + 6 months)
+        const eligibleFromDate = sixMonthsFromJoining.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        console.log('Eligibility Check:', {
+            joiningDate: joiningDate.toISOString(),
+            sixMonthsFromJoining: sixMonthsFromJoining.toISOString(),
+            today: today.toISOString(),
+            totalMonthsFromJoining: totalMonths,  // Yeh sahi hoga
+            isEligible: isEligibleToApply
+        });
+
+        // ===== ACCRUAL CALCULATION (Calendar year based - yeh sahi hai) =====
         const currentYear = today.getFullYear();
         const currentMonth = today.getMonth() + 1;
         const currentDay = today.getDate();
         
-        const joiningDate = new Date(employee[0].joining_date);
         const joinYear = joiningDate.getFullYear();
         const joinMonth = joiningDate.getMonth() + 1;
 
-        console.log('Joining Date:', employee[0].joining_date);
-        console.log('Current Date:', today);
-        console.log('Current Year:', currentYear);
-        console.log('Current Month:', currentMonth);
-        console.log('Current Day:', currentDay);
-
-        // Calculate completed months in CURRENT YEAR only
+        // Calculate completed months in CURRENT YEAR only (for accrual)
         let completedMonthsInCurrentYear = 0;
         
         if (currentYear > joinYear) {
@@ -61,7 +97,6 @@ exports.getLeaveBalance = async (req, res) => {
                     }
                 }
             }
-            console.log('Employee joined in previous year');
         } else if (currentYear === joinYear) {
             // Employee joined in current year
             // Count months from join month up to previous month
@@ -75,10 +110,9 @@ exports.getLeaveBalance = async (req, res) => {
                     }
                 }
             }
-            console.log('Employee joined in current year');
         }
 
-        console.log('Completed months in current year:', completedMonthsInCurrentYear);
+        console.log('Completed months in current year (for accrual):', completedMonthsInCurrentYear);
 
         // Calculate accrued leaves for current year
         const totalAccrued = completedMonthsInCurrentYear * 1.5;
@@ -132,10 +166,6 @@ exports.getLeaveBalance = async (req, res) => {
             );
         }
 
-        // Calculate total months in company (for eligibility)
-        const totalMonths = (currentYear - joinYear) * 12 + (currentMonth - joinMonth);
-        const isEligibleToApply = totalMonths >= 6;
-
         const response = {
             success: true,
             employee_id,
@@ -145,9 +175,10 @@ exports.getLeaveBalance = async (req, res) => {
             available: calculatedAvailable.toFixed(1),
             monthly_accrual: 1.5,
             joining_date: employee[0].joining_date,
-            months_completed: totalMonths,
+            months_completed: totalMonths,  // AB YEH SAHI HOGA - joining date se calculate
             completed_months_in_year: completedMonthsInCurrentYear,
             is_eligible: isEligibleToApply,
+            eligible_from_date: eligibleFromDate,
             leave_year: currentYear,
             next_accrual_date: new Date(currentYear, currentMonth, 1).toISOString().split('T')[0],
             message: `Leaves for year ${currentYear} only. Previous year leaves expired on Dec 31.`
@@ -166,7 +197,7 @@ exports.getLeaveBalance = async (req, res) => {
     }
 };
 
-// Apply for leave - COMPLETELY REWRITTEN
+// Apply for leave
 exports.applyLeave = async (req, res) => {
     try {
         console.log('='.repeat(50));
@@ -222,16 +253,32 @@ exports.applyLeave = async (req, res) => {
 
         const emp = employee[0];
 
-        // Check if employee has completed 6 months total
+        // Check if employee has completed 6 months from joining date
         const joiningDate = new Date(emp.joining_date);
         const today = new Date();
-        const totalMonths = (today.getFullYear() - joiningDate.getFullYear()) * 12 + 
-                           (today.getMonth() - joiningDate.getMonth());
+        const sixMonthsFromJoining = new Date(joiningDate);
+        sixMonthsFromJoining.setMonth(sixMonthsFromJoining.getMonth() + 6);
+        
+        const isEligible = today >= sixMonthsFromJoining;
 
-        if (leave_type !== 'Unpaid' && totalMonths < 6) {
+        console.log('Eligibility Check:', {
+            joiningDate: joiningDate.toISOString(),
+            sixMonthsFromJoining: sixMonthsFromJoining.toISOString(),
+            today: today.toISOString(),
+            isEligible,
+            leave_type
+        });
+
+        // If not eligible, only allow Unpaid Leave
+        if (!isEligible && leave_type !== 'Unpaid') {
+            const eligibleDate = sixMonthsFromJoining.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
             return res.status(403).json({ 
                 success: false, 
-                message: `You cannot apply for paid leave until you complete 6 months. Current: ${totalMonths} months` 
+                message: `During probation (until ${eligibleDate}), you can only apply for Unpaid Leave.` 
             });
         }
 
@@ -294,10 +341,11 @@ exports.applyLeave = async (req, res) => {
             totalUsed,
             totalPending,
             available,
-            requested: numberOfDays
+            requested: numberOfDays,
+            leave_type
         });
 
-        // Check if sufficient available balance
+        // Check if sufficient available balance (only for non-Unpaid leaves)
         if (leave_type !== 'Unpaid' && available < numberOfDays) {
             return res.status(400).json({ 
                 success: false, 
@@ -347,42 +395,46 @@ exports.applyLeave = async (req, res) => {
 
             console.log('Leave inserted with ID:', result.insertId);
 
-            // IMPORTANT: Update balance - Move from available to pending
-            const newPending = totalPending + numberOfDays;
-            const newAvailable = available - numberOfDays;
+            // Update balance only for non-Unpaid leaves
+            if (leave_type !== 'Unpaid') {
+                const newPending = totalPending + numberOfDays;
+                const newAvailable = available - numberOfDays;
 
-            console.log('Updating balance:', {
-                oldPending: totalPending,
-                newPending,
-                oldAvailable: available,
-                newAvailable
-            });
+                console.log('Updating balance (non-Unpaid leave):', {
+                    oldPending: totalPending,
+                    newPending,
+                    oldAvailable: available,
+                    newAvailable
+                });
 
-            await connection.query(
-                `UPDATE leave_balance 
-                 SET total_pending = ?, 
-                     current_balance = ? 
-                 WHERE employee_id = ? AND leave_year = ?`,
-                [newPending, newAvailable, employee_id, currentYear]
-            );
+                await connection.query(
+                    `UPDATE leave_balance 
+                     SET total_pending = ?, 
+                         current_balance = ? 
+                     WHERE employee_id = ? AND leave_year = ?`,
+                    [newPending, newAvailable, employee_id, currentYear]
+                );
+            } else {
+                console.log('Unpaid leave - No balance update required');
+            }
 
             // Commit transaction
             await connection.commit();
             console.log('Transaction committed successfully');
 
-            // Get updated balance
-            const [updatedBalance] = await db.query(
-                'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-                [employee_id, currentYear]
-            );
+            // Get updated balance (if needed)
+            let newBalance = currentBalance;
+            if (leave_type !== 'Unpaid') {
+                const [updatedBalance] = await db.query(
+                    'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
+                    [employee_id, currentYear]
+                );
+                newBalance = updatedBalance[0];
+            }
 
-            const newBalance = updatedBalance[0];
-
-            console.log('Final balance after update:', {
-                total_accrued: newBalance.total_accrued,
-                total_used: newBalance.total_used,
-                total_pending: newBalance.total_pending,
-                current_balance: newBalance.current_balance
+            console.log('Final status:', {
+                leave_type,
+                balance_updated: leave_type !== 'Unpaid'
             });
 
             res.status(201).json({

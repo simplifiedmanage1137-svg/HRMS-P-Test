@@ -1,7 +1,19 @@
-// components/Layout/Navbar.jsx
+// src/components/Layout/Navbar.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FaBell, FaUserCircle, FaClock, FaCalendarAlt, FaEdit, FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
+import { 
+  FaBell, 
+  FaUserCircle, 
+  FaClock, 
+  FaCalendarAlt, 
+  FaEdit, 
+  FaCheckCircle, 
+  FaTimesCircle, 
+  FaUser, 
+  FaSignOutAlt,
+  FaTrash,
+  FaTimes
+} from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import axios from 'axios';
@@ -9,13 +21,13 @@ import { Badge, Button, Dropdown } from 'react-bootstrap';
 import EventNotification from '../Common/EventNotification';
 
 const Navbar = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { 
     eventNotifications, 
     markEventAsRead, 
     markAllEventsAsRead,
-    fetchTodayEvents 
+    removeNotification 
   } = useNotification();
   
   const [notifications, setNotifications] = useState([]);
@@ -43,11 +55,8 @@ const Navbar = () => {
     if (user) {
       fetchEmployeeName();
       fetchNotifications();
-      
-      // Fetch pending update requests
       fetchPendingUpdateRequests();
       
-      // Refresh notifications every 30 seconds
       const interval = setInterval(() => {
         fetchNotifications();
         fetchPendingUpdateRequests();
@@ -57,14 +66,14 @@ const Navbar = () => {
     }
   }, [user]);
 
-  // Update unread count when event notifications change
+  // Update unread count
   useEffect(() => {
     const unreadEvents = eventNotifications.filter(e => !e.read).length;
     const unreadRegular = notifications.filter(n => !n.is_read).length;
     setUnreadCount(unreadRegular + unreadEvents);
   }, [eventNotifications, notifications]);
 
-  // Handle clicking outside to close notifications
+  // Handle clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
@@ -93,12 +102,6 @@ const Navbar = () => {
         return;
       }
       
-      if (user?.employeeData) {
-        const fullName = `${user.employeeData.first_name || ''} ${user.employeeData.last_name || ''}`.trim();
-        setEmployeeName(fullName || 'Employee');
-        return;
-      }
-      
       const response = await axios.get(`http://localhost:5000/api/employees/profile/${user?.employeeId}`);
       if (response.data) {
         const fullName = `${response.data.first_name || ''} ${response.data.last_name || ''}`.trim();
@@ -111,24 +114,18 @@ const Navbar = () => {
   };
 
   const fetchNotifications = async () => {
-    if (!user?.employeeId || loading) return;
+    if (!user?.employeeId) return;
     
-    setLoading(true);
     try {
       const response = await axios.get(`http://localhost:5000/api/notifications?employee_id=${user.employeeId}`);
-      
       if (response.data && Array.isArray(response.data)) {
         setNotifications(response.data);
       }
-      
     } catch (error) {
       console.error('Error fetching notifications:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
-  // Fetch pending update requests
   const fetchPendingUpdateRequests = async () => {
     try {
       const response = await axios.get('http://localhost:5000/api/employee-updates/pending-requests');
@@ -139,14 +136,9 @@ const Navbar = () => {
       } else if (response.data?.requests && Array.isArray(response.data.requests)) {
         setPendingRequests(response.data.requests);
         setPendingCount(response.data.requests.length);
-      } else {
-        setPendingRequests([]);
-        setPendingCount(0);
       }
     } catch (error) {
       console.error('Error fetching pending requests:', error);
-      setPendingRequests([]);
-      setPendingCount(0);
     }
   };
 
@@ -161,15 +153,41 @@ const Navbar = () => {
     }
   };
 
+  const deleteNotification = async (id, e) => {
+    e.stopPropagation(); // Prevent triggering parent click
+    
+    try {
+      // Call API to delete notification
+      await axios.delete(`http://localhost:5000/api/notifications/${id}`);
+      
+      // Remove from local state
+      setNotifications(prev => prev.filter(n => n.id !== id));
+      
+      // Also try to remove from context if available
+      if (removeNotification) {
+        removeNotification(id);
+      }
+    } catch (error) {
+      console.error('Error deleting notification:', error);
+      
+      // If API fails, at least remove from UI
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }
+  };
+
+  const deleteEventNotification = (eventId, e) => {
+    e.stopPropagation();
+    
+    if (markEventAsRead) {
+      markEventAsRead(eventId);
+    }
+  };
+
   const markAllAsRead = async () => {
     try {
-      // Mark regular notifications as read
       const unreadIds = notifications.filter(n => !n.is_read).map(n => n.id);
       await Promise.all(unreadIds.map(id => markAsRead(id)));
-      
-      // Mark event notifications as read
       markAllEventsAsRead();
-      
     } catch (error) {
       console.error('Error marking all as read:', error);
     }
@@ -186,6 +204,11 @@ const Navbar = () => {
       navigate('/employee/update-requests');
     }
     setShowNotifications(false);
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
   };
 
   const formatNotificationTime = (dateString) => {
@@ -250,9 +273,9 @@ const Navbar = () => {
       height: '60px'
     }}>
       <div>
-        <h5 style={{ margin: 0, fontSize: '16px', fontWeight: 'normal' }}>
+        {/* <h5 style={{ margin: 0, fontSize: '16px', fontWeight: 'normal' }}>
           Welcome, <span style={{ color: '#d53f8c', fontWeight: 'bold' }}>{employeeName}</span>
-        </h5>
+        </h5> */}
       </div>
       
       <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -296,40 +319,37 @@ const Navbar = () => {
           )}
         </div>
 
-        {/* Profile Dropdown */}
+        {/* Profile Dropdown - Fixed with role-based menu items */}
         <Dropdown align="end">
           <Dropdown.Toggle variant="link" style={{ padding: 0, border: 'none', color: '#d53f8c' }}>
             <FaUserCircle size={28} color="#d53f8c" />
           </Dropdown.Toggle>
 
           <Dropdown.Menu>
-            <Dropdown.Item as={Link} to="/profile">
-              <FaUserCircle className="me-2" /> My Profile
+            {/* My Profile - Sirf EMPLOYEE ke liye show hoga */}
+            {user?.role === 'employee' && (
+              <Dropdown.Item as={Link} to="/profile">
+                <FaUser className="me-2" /> My Profile
+              </Dropdown.Item>
+            )}
+            
+            {/* Update Requests - Sabke liye (role ke hisaab se different path) */}
+            <Dropdown.Item 
+              as={Link} 
+              to={user?.role === 'admin' ? '/admin/update-requests' : '/employee/update-requests'}
+            >
+              <FaEdit className="me-2" /> Update Requests
+              {pendingCount > 0 && (
+                <Badge bg="danger" className="ms-2">{pendingCount}</Badge>
+              )}
             </Dropdown.Item>
             
-{user?.role === 'employee' && (
-  <>
-    <Dropdown.Item as={Link} to="/employee/update-requests">
-      <FaEdit className="me-2" /> Update Requests
-      {pendingCount > 0 && (
-        <Badge bg="danger" className="ms-2">{pendingCount}</Badge>
-      )}
-    </Dropdown.Item>
-    <Dropdown.Divider />
-  </>
-)}
+            <Dropdown.Divider />
             
-            {user?.role === 'admin' && (
-              <>
-                <Dropdown.Item as={Link} to="/admin/update-requests">
-                  <FaEdit className="me-2" /> Update Requests
-                  {pendingCount > 0 && (
-                    <Badge bg="danger" className="ms-2">{pendingCount}</Badge>
-                  )}
-                </Dropdown.Item>
-                <Dropdown.Divider />
-              </>
-            )}
+            {/* Logout - Sabke liye common */}
+            <Dropdown.Item onClick={handleLogout}>
+              <FaSignOutAlt className="me-2" /> Logout
+            </Dropdown.Item>
           </Dropdown.Menu>
         </Dropdown>
       </div>
@@ -393,11 +413,28 @@ const Navbar = () => {
             <div className="mb-3">
               <small className="text-muted fw-semibold d-block mb-2">🎉 Today's Events</small>
               {eventNotifications.filter(e => !e.read).map(event => (
-                <EventNotification 
-                  key={event.id} 
-                  event={event} 
-                  onClose={() => handleEventClose(event.id)}
-                />
+                <div key={event.id} style={{ position: 'relative' }}>
+                  <EventNotification 
+                    event={event} 
+                    onClose={() => handleEventClose(event.id)}
+                  />
+                  <Button
+                    variant="link"
+                    size="sm"
+                    onClick={(e) => deleteEventNotification(event.id, e)}
+                    style={{
+                      position: 'absolute',
+                      top: '5px',
+                      right: '5px',
+                      padding: '2px 5px',
+                      color: '#999',
+                      fontSize: '12px'
+                    }}
+                    title="Remove notification"
+                  >
+                    <FaTimes />
+                  </Button>
+                </div>
               ))}
             </div>
           )}
@@ -414,14 +451,13 @@ const Navbar = () => {
                     padding: '10px',
                     borderRadius: '4px',
                     backgroundColor: !notif.is_read ? '#f8f9fa' : 'transparent',
-                    cursor: !notif.is_read ? 'pointer' : 'default',
-                    marginBottom: '5px'
+                    marginBottom: '5px',
+                    position: 'relative'
                   }}
-                  onClick={() => !notif.is_read && markAsRead(notif.id)}
                 >
                   <div className="d-flex align-items-start">
                     {getNotificationIcon(notif.type)}
-                    <div className="flex-grow-1">
+                    <div className="flex-grow-1" style={{ marginRight: '25px' }}>
                       <p style={{ margin: '0 0 5px 0', fontSize: '13px' }}>{notif.message}</p>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <small style={{ color: '#999' }}>
@@ -432,7 +468,41 @@ const Navbar = () => {
                         )}
                       </div>
                     </div>
+                    
+                    {/* Delete Button */}
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={(e) => deleteNotification(notif.id, e)}
+                      style={{
+                        position: 'absolute',
+                        top: '5px',
+                        right: '5px',
+                        padding: '2px 5px',
+                        color: '#999',
+                        fontSize: '12px'
+                      }}
+                      title="Delete notification"
+                    >
+                      <FaTimes />
+                    </Button>
                   </div>
+                  
+                  {/* Mark as read on click (but not when clicking delete) */}
+                  {!notif.is_read && (
+                    <div 
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        cursor: 'pointer',
+                        zIndex: 0
+                      }}
+                      onClick={() => markAsRead(notif.id)}
+                    />
+                  )}
                 </div>
               ))}
             </div>
