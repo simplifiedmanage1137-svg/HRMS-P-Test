@@ -1,26 +1,33 @@
+// routes/leaveRoutes.js
 const express = require('express');
 const router = express.Router();
 const leaveController = require('../controllers/leaveController');
 
-// Get leave types
-router.get('/types', leaveController.getLeaveTypes);
+module.exports = (supabase) => {
+    // Pass supabase to controller if needed
+    // If controller doesn't need supabase directly, just return router
+    
+    // Get leave types
+    router.get('/types', leaveController.getLeaveTypes);
 
-// Get leave balance for employee
-router.get('/balance/:employee_id', leaveController.getLeaveBalance);
+    // Get leave balance for employee
+    router.get('/balance/:employee_id', leaveController.getLeaveBalance);
 
-// Get all leaves
-router.get('/', leaveController.getLeaves);
+    // Get all leaves (admin gets all, employee gets their own)
+    router.get('/', leaveController.getLeaves);
 
-// Apply for leave
-router.post('/apply', leaveController.applyLeave);
+    // Apply for leave
+    router.post('/apply', leaveController.applyLeave);
 
-// Update leave status (admin only)
-router.put('/:id/status', leaveController.updateLeaveStatus);
+    // Update leave status (admin only)
+    router.put('/:id/status', leaveController.updateLeaveStatus);
 
-// Manual accrual (for testing)
-router.post('/manual-accrual/:employee_id', leaveController.manualAccrual);
+    // Manual accrual (for testing)
+    router.post('/manual-accrual/:employee_id', leaveController.manualAccrual);
 
-// Yearly reset (admin only)
-router.post('/yearly-reset', leaveController.yearlyReset);
+    // Yearly reset (admin only)
+    router.post('/yearly-reset', leaveController.yearlyReset);
 
-module.exports = router;
+    console.log('✅ Leave routes loaded');
+    return router;
+};

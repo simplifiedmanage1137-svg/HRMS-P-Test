@@ -1,10 +1,10 @@
 // components/Admin/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { Row, Col, Card, Table, Badge, Spinner, Alert, Form, Button } from 'react-bootstrap';
-import { 
-  FaUsers, 
-  FaUserCheck, 
-  FaUserTimes, 
+import {
+  FaUsers,
+  FaUserCheck,
+  FaUserTimes,
   FaCalendarAlt,
   FaBirthdayCake,
   FaTrophy,
@@ -58,7 +58,7 @@ ChartJS.register(
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { todayEvents, fetchTodayEvents } = useNotification();
-  
+
   const [stats, setStats] = useState({
     total: 0,
     present: 0,
@@ -69,7 +69,7 @@ const AdminDashboard = () => {
     halfDay: 0,
     working: 0
   });
-  
+
   const [recentEmployees, setRecentEmployees] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [employeeLeaveBalances, setEmployeeLeaveBalances] = useState([]);
@@ -88,7 +88,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     fetchDashboardData();
     fetchTodayEvents();
-    
+
     const timer = setInterval(() => {
       if (autoRefresh) {
         refreshAttendanceData();
@@ -103,17 +103,36 @@ const AdminDashboard = () => {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      
+
       const employeesRes = await axios.get(API_ENDPOINTS.EMPLOYEES);
-      const employees = employeesRes.data;
-      
+
+      // Safely extract employees array
+      let employees = [];
+      if (employeesRes.data) {
+        if (Array.isArray(employeesRes.data)) {
+          employees = employeesRes.data;
+        } else if (employeesRes.data.data && Array.isArray(employeesRes.data.data)) {
+          employees = employeesRes.data.data;
+        } else if (employeesRes.data.employees && Array.isArray(employeesRes.data.employees)) {
+          employees = employeesRes.data.employees;
+        } else {
+          // Try to convert object to array if it's not empty
+          const possibleArray = Object.values(employeesRes.data).filter(v => typeof v === 'object');
+          if (possibleArray.length > 0 && possibleArray[0]?.id) {
+            employees = possibleArray;
+          }
+        }
+      }
+
+      console.log('Employees fetched:', employees.length);
       setTotalEmployees(employees.length);
-      
+
       setStats(prevStats => ({
         ...prevStats,
         total: employees.length
       }));
-      
+
+      // Fetch leave balances for each employee
       const balancesPromises = employees.map(async (emp) => {
         try {
           const balanceRes = await axios.get(API_ENDPOINTS.LEAVE_BALANCE(emp.employee_id));
@@ -122,18 +141,19 @@ const AdminDashboard = () => {
             leaveBalance: balanceRes.data
           };
         } catch (error) {
+          console.warn(`Error fetching balance for ${emp.employee_id}:`, error);
           return {
             ...emp,
-            leaveBalance: { 
-              available: '0', 
-              total_accrued: '0', 
-              used: '0', 
-              pending: '0' 
+            leaveBalance: {
+              available: '0',
+              total_accrued: '0',
+              used: '0',
+              pending: '0'
             }
           };
         }
       });
-      
+
       const employeesWithBalance = await Promise.all(balancesPromises);
       setEmployeeLeaveBalances(employeesWithBalance);
 
@@ -142,7 +162,7 @@ const AdminDashboard = () => {
 
       setRecentEmployees(employees.slice(-5));
       setLastUpdated(new Date());
-      
+
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       setMessage({
@@ -160,12 +180,12 @@ const AdminDashboard = () => {
       const attendanceRes = await axios.get(
         `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${today}&end=${today}`
       );
-      
+
       const attendanceData = attendanceRes.data.attendance || [];
       setTodayAttendance(attendanceData);
-      
+
       updateStats(attendanceData);
-      
+
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Error refreshing attendance:', error);
@@ -183,15 +203,15 @@ const AdminDashboard = () => {
 
   const updateStats = (attendanceData) => {
     const total = totalEmployees;
-    
+
     const present = attendanceData.filter(a => a.status === 'present').length;
     const halfDay = attendanceData.filter(a => a.status === 'half_day').length;
     const working = attendanceData.filter(a => a.status === 'working' || (a.clock_in && !a.clock_out)).length;
     const late = attendanceData.filter(a => parseFloat(a.late_minutes) > 0).length;
     const onLeave = attendanceData.filter(a => a.is_on_leave || a.status === 'on_leave').length;
-    
+
     const totalPresent = present + halfDay + working;
-    
+
     let absent = total - totalPresent - onLeave;
     absent = absent < 0 ? 0 : absent;
 
@@ -221,7 +241,7 @@ const AdminDashboard = () => {
         }
         deptStats[emp.department].total++;
       });
-      
+
       attendanceData.forEach(record => {
         if (deptStats[record.department]) {
           if (record.status === 'present' || record.status === 'working' || record.status === 'half_day') {
@@ -235,7 +255,7 @@ const AdminDashboard = () => {
           }
         }
       });
-      
+
       Object.keys(deptStats).forEach(dept => {
         const deptTotal = deptStats[dept].total;
         const deptPresent = deptStats[dept].present || 0;
@@ -243,27 +263,27 @@ const AdminDashboard = () => {
         let deptAbsent = deptTotal - deptPresent - deptOnLeave;
         deptStats[dept].absent = deptAbsent < 0 ? 0 : deptAbsent;
       });
-      
+
       setDepartmentStats(deptStats);
     }
   };
 
   const getFilteredEmployees = () => {
     let filtered = [...employeeLeaveBalances];
-    
+
     if (filterDepartment !== 'all') {
       filtered = filtered.filter(emp => emp.department === filterDepartment);
     }
-    
+
     if (searchTerm) {
-      filtered = filtered.filter(emp => 
+      filtered = filtered.filter(emp =>
         emp.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.employee_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.department?.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
-    
+
     filtered.sort((a, b) => {
       if (sortBy === 'name') {
         return (a.first_name || '').localeCompare(b.first_name || '');
@@ -274,21 +294,21 @@ const AdminDashboard = () => {
       }
       return 0;
     });
-    
+
     return filtered;
   };
 
   const departments = ['all', ...new Set(employeeLeaveBalances.map(emp => emp.department).filter(Boolean))];
 
-  const totalLeavesAvailable = employeeLeaveBalances.reduce((sum, emp) => 
+  const totalLeavesAvailable = employeeLeaveBalances.reduce((sum, emp) =>
     sum + (parseFloat(emp.leaveBalance?.available) || 0), 0
   );
-  
-  const averageLeavesPerEmployee = employeeLeaveBalances.length > 0 
-    ? (totalLeavesAvailable / employeeLeaveBalances.length).toFixed(1) 
+
+  const averageLeavesPerEmployee = employeeLeaveBalances.length > 0
+    ? (totalLeavesAvailable / employeeLeaveBalances.length).toFixed(1)
     : 0;
 
-  const employeesWithLowBalance = employeeLeaveBalances.filter(emp => 
+  const employeesWithLowBalance = employeeLeaveBalances.filter(emp =>
     parseFloat(emp.leaveBalance?.available) < 3
   ).length;
 
@@ -378,9 +398,9 @@ const AdminDashboard = () => {
 
       {/* Message Alert */}
       {message.text && (
-        <Alert 
-          variant={message.type} 
-          onClose={() => setMessage({ type: '', text: '' })} 
+        <Alert
+          variant={message.type}
+          onClose={() => setMessage({ type: '', text: '' })}
           dismissible
           className="mb-4"
         >
@@ -391,8 +411,8 @@ const AdminDashboard = () => {
       {/* ========== TODAY'S EVENTS WIDGET - SHOW ONLY WHEN THERE ARE CELEBRATIONS ========== */}
       {hasCelebrations && (
         <Card className="mb-4 border-0 shadow-sm">
-          <Card.Header className="bg-gradient text-white py-2" style={{ 
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' 
+          <Card.Header className="bg-gradient text-white py-2" style={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
           }}>
             <h6 className="mb-0 d-flex align-items-center">
               <FaBirthdayCake className="me-2" size={14} />
@@ -404,12 +424,12 @@ const AdminDashboard = () => {
             <div className="d-flex flex-wrap gap-2">
               {/* Birthdays */}
               {todayEvents.birthdays?.map(emp => (
-                <Badge 
+                <Badge
                   key={`birthday-${emp.id}`}
-                  bg="light" 
-                  text="dark" 
+                  bg="light"
+                  text="dark"
                   className="p-2 d-flex align-items-center gap-2 shadow-sm"
-                  style={{ 
+                  style={{
                     borderLeft: '4px solid #ff6b6b',
                     borderRadius: '8px',
                     minWidth: '250px'
@@ -431,15 +451,15 @@ const AdminDashboard = () => {
                   </div>
                 </Badge>
               ))}
-              
+
               {/* Anniversaries */}
               {todayEvents.anniversaries?.map(emp => (
-                <Badge 
+                <Badge
                   key={`anniversary-${emp.id}`}
-                  bg="light" 
-                  text="dark" 
+                  bg="light"
+                  text="dark"
                   className="p-2 d-flex align-items-center gap-2 shadow-sm"
-                  style={{ 
+                  style={{
                     borderLeft: '4px solid #ffd700',
                     borderRadius: '8px',
                     minWidth: '250px'
@@ -462,7 +482,7 @@ const AdminDashboard = () => {
                 </Badge>
               ))}
             </div>
-            
+
             {/* Summary */}
             <div className="mt-3 pt-2 border-top small text-muted">
               <span className="fw-semibold">Total Celebrations Today:</span>{' '}
@@ -483,7 +503,7 @@ const AdminDashboard = () => {
           </Card.Body>
         </Card>
       )}
-      
+
       {/* Quick Stats Cards */}
       <Row className="mb-4 g-3">
         <Col md={3}>
@@ -500,7 +520,7 @@ const AdminDashboard = () => {
             </Card.Body>
           </Card>
         </Col>
-        
+
         <Col md={3}>
           <Card className="border-0 shadow-sm bg-white">
             <Card.Body>
@@ -515,7 +535,7 @@ const AdminDashboard = () => {
             </Card.Body>
           </Card>
         </Col>
-        
+
         <Col md={3}>
           <Card className="border-0 shadow-sm bg-white">
             <Card.Body>
@@ -530,7 +550,7 @@ const AdminDashboard = () => {
             </Card.Body>
           </Card>
         </Col>
-        
+
         <Col md={3}>
           <Card className="border-0 shadow-sm bg-white">
             <Card.Body>
@@ -577,7 +597,7 @@ const AdminDashboard = () => {
                 {todayAttendance && todayAttendance.length > 0 ? (
                   todayAttendance.map((att, index) => {
                     const isWorking = att.clock_in && !att.clock_out;
-                    
+
                     return (
                       <tr key={index} className={isWorking ? 'table-white' : ''}>
                         <td className="fw-normal text-center">{index + 1}</td>
@@ -586,7 +606,7 @@ const AdminDashboard = () => {
                           <small className="text-muted">{att.employee_id}</small>
                         </td>
                         <td className='small'>{att.department}</td>
-                        <td  className='small'> 
+                        <td className='small'>
                           <div bg="light" text="dark" className="fw-normal">
                             {att.shift_time_used || 'Not set'}
                           </div>
@@ -754,7 +774,7 @@ const AdminDashboard = () => {
                   filteredEmployees.map((emp, index) => {
                     const available = parseFloat(emp.leaveBalance?.available) || 0;
                     const statusColor = available <= 0 ? 'danger' : available < 3 ? 'warning' : 'success';
-                    
+
                     return (
                       <tr key={emp.id}>
                         <td className="small text-center">{index + 1}</td>

@@ -1,32 +1,113 @@
-const db = require('../config/database');
+const supabase = require('../config/supabase');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
 const EmployeeService = require('../services/employeeService');
 
+// Generate Employee ID with 2-digit sequence based on joining date
+const generateEmployeeIdBasedOnJoiningDate = async (joiningDate) => {
+    const date = new Date(joiningDate);
+    const year = date.getFullYear().toString().slice(-2);
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
 
-// Generate Employee ID (B2B_YY_MM_Sequence)
+    try {
+        console.log('Generating employee ID for joining date:', joiningDate);
+        console.log('Year:', year, 'Month:', month);
+
+        // Get all employees with same year/month prefix
+        const { data: employees, error } = await supabase
+            .from('employees')
+            .select('employee_id')
+            .like('employee_id', `B2B${year}${month}%`)
+            .order('employee_id', { ascending: false });
+
+        if (error) throw error;
+
+        let nextSequence = 1;
+
+        if (employees && employees.length > 0) {
+            // Extract the last 2 digits from the existing IDs
+            const sequences = employees.map(emp => {
+                const id = emp.employee_id;
+                // Extract last 2 characters (sequence)
+                const seqStr = id.slice(-2);
+                const seq = parseInt(seqStr, 10);
+                return isNaN(seq) ? 0 : seq;
+            });
+            
+            const maxSequence = Math.max(...sequences);
+            nextSequence = maxSequence + 1;
+            console.log('Last sequence found:', maxSequence, 'Next sequence:', nextSequence);
+        } else {
+            console.log('No existing employees for this month, starting with sequence 01');
+        }
+
+        // Ensure sequence doesn't exceed 99
+        if (nextSequence > 99) {
+            throw new Error('Maximum employees for this month reached (99)');
+        }
+
+        // Format sequence as 2 digits with leading zero
+        const sequence = nextSequence.toString().padStart(2, '0');
+        const employeeId = `B2B${year}${month}${sequence}`;
+
+        // Double-check if this ID already exists
+        const { data: existing, error: checkError } = await supabase
+            .from('employees')
+            .select('employee_id')
+            .eq('employee_id', employeeId);
+
+        if (checkError) throw checkError;
+
+        if (existing && existing.length > 0) {
+            console.log('Generated ID already exists, trying next sequence');
+            // If it exists, try the next number recursively
+            return await generateEmployeeIdBasedOnJoiningDate(joiningDate);
+        }
+
+        console.log('Generated Employee ID:', {
+            joiningDate,
+            year,
+            month,
+            nextSequence,
+            sequence,
+            employeeId
+        });
+
+        return employeeId;
+    } catch (error) {
+        console.error('Error generating employee ID:', error);
+        // Fallback with timestamp to ensure uniqueness
+        const timestamp = Date.now().toString().slice(-4);
+        const fallbackSeq = timestamp.slice(-2);
+        return `B2B${year}${month}${fallbackSeq}`;
+    }
+};
+
+// Also fix the other generateEmployeeId function if it exists
 const generateEmployeeId = async () => {
     const date = new Date();
-    const year = date.getFullYear().toString().slice(-2); // Last 2 digits of year
-    const month = (date.getMonth() + 1).toString().padStart(2, '0'); // Month with leading zero
+    const year = date.getFullYear().toString().slice(-2);
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
 
     try {
         // Get count of employees joined THIS MONTH
-        const [result] = await db.query(
-            `SELECT COUNT(*) as count FROM employees 
-             WHERE MONTH(joining_date) = MONTH(CURRENT_DATE()) 
-             AND YEAR(joining_date) = YEAR(CURRENT_DATE())`
-        );
+        const { count, error } = await supabase
+            .from('employees')
+            .select('*', { count: 'exact', head: true })
+            .gte('joining_date', `${date.getFullYear()}-${month}-01`)
+            .lt('joining_date', `${date.getFullYear()}-${String(date.getMonth() + 2).padStart(2, '0')}-01`);
+
+        if (error) throw error;
 
         // Get the sequence number for this month (add 1 to count)
-        const sequence = (result[0].count + 1).toString().padStart(3, '0'); // 3 digits with leading zeros
+        const sequence = (count + 1).toString().padStart(2, '0'); // Changed from 3 to 2
         const employeeId = `B2B${year}${month}${sequence}`;
 
         console.log('Generated Employee ID:', {
             year,
             month,
-            count: result[0].count,
+            count,
             sequence,
             employeeId
         });
@@ -35,7 +116,7 @@ const generateEmployeeId = async () => {
     } catch (error) {
         console.error('Error generating employee ID:', error);
         // Fallback with random sequence if error
-        const randomSeq = Math.floor(Math.random() * 90 + 10).toString().padStart(3, '0');
+        const randomSeq = Math.floor(Math.random() * 90 + 10).toString().padStart(2, '0'); // Changed from 3 to 2
         return `B2B${year}${month}${randomSeq}`;
     }
 };
@@ -60,7 +141,7 @@ exports.createEmployee = async (req, res) => {
             reporting_manager,
             employment_type,
             salary,
-            emergency_contact, // New field
+            emergency_contact,
             shift_timing,
             contract_policy
         } = req.body;
@@ -94,7 +175,7 @@ exports.createEmployee = async (req, res) => {
         }
 
         // Format dates
-        const formatDateForMySQL = (dateStr) => {
+        const formatDateForPostgres = (dateStr) => {
             if (!dateStr) return null;
             if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
                 return dateStr;
@@ -106,8 +187,8 @@ exports.createEmployee = async (req, res) => {
             return dateStr;
         };
 
-        const formattedDob = formatDateForMySQL(dob);
-        const formattedJoiningDate = formatDateForMySQL(joining_date);
+        const formattedDob = formatDateForPostgres(dob);
+        const formattedJoiningDate = formatDateForPostgres(joining_date);
 
         console.log('Formatted Dates:', {
             dob: formattedDob,
@@ -122,12 +203,11 @@ exports.createEmployee = async (req, res) => {
         const monthsCompleted = 0;
         const canApplyLeave = false;
 
-        // Start transaction
-        const connection = await db.getConnection();
-        await connection.beginTransaction();
-
+        // Start transaction - Supabase doesn't support transactions directly
+        // We'll do sequential operations with error handling
+        
         try {
-            // Insert employee with emergency contact
+            // Insert employee
             console.log('Inserting employee with data:', {
                 employee_id: employeeId,
                 first_name,
@@ -148,34 +228,32 @@ exports.createEmployee = async (req, res) => {
                 can_apply_leave: canApplyLeave
             });
 
-            const [employeeResult] = await connection.query(
-                `INSERT INTO employees 
-                (employee_id, first_name, middle_name, last_name, dob, position, 
-                joining_date, address, department, reporting_manager, employment_type, 
-                salary, emergency_contact, shift_timing, contract_policy, joining_month_count, can_apply_leave) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    employeeId,
+            const { data: employeeData, error: employeeError } = await supabase
+                .from('employees')
+                .insert([{
+                    employee_id: employeeId,
                     first_name,
-                    middle_name || null,
+                    middle_name: middle_name || null,
                     last_name,
-                    formattedDob,
+                    dob: formattedDob,
                     position,
-                    formattedJoiningDate,
+                    joining_date: formattedJoiningDate,
                     address,
                     department,
-                    reporting_manager || null,
-                    employment_type || 'Full Time',
-                    parseFloat(salary),
-                    emergency_contact || null,
-                    shift_timing || '9:00 AM - 6:00 PM',
-                    contract_policy || null,
-                    monthsCompleted,
-                    canApplyLeave
-                ]
-            );
+                    reporting_manager: reporting_manager || null,
+                    employment_type: employment_type || 'Full Time',
+                    salary: parseFloat(salary),
+                    emergency_contact: emergency_contact || null,
+                    shift_timing: shift_timing || '9:00 AM - 6:00 PM',
+                    contract_policy: contract_policy || null,
+                    joining_month_count: monthsCompleted,
+                    can_apply_leave: canApplyLeave
+                }])
+                .select();
 
-            console.log('Employee inserted successfully. Insert ID:', employeeResult.insertId);
+            if (employeeError) throw employeeError;
+
+            console.log('Employee inserted successfully. ID:', employeeData[0].id);
 
             // Create user account for employee
             const hashedPassword = await bcrypt.hash('Welcome@123', 10);
@@ -183,34 +261,46 @@ exports.createEmployee = async (req, res) => {
 
             console.log('Creating user account with email:', email);
 
-            const [userResult] = await connection.query(
-                'INSERT INTO users (employee_id, email, password, role) VALUES (?, ?, ?, ?)',
-                [employeeId, email, hashedPassword, 'employee']
-            );
+            const { data: userData, error: userError } = await supabase
+                .from('users')
+                .insert([{
+                    employee_id: employeeId,
+                    email: email,
+                    password: hashedPassword,
+                    role: 'employee'
+                }])
+                .select();
 
-            console.log('User account created successfully. User ID:', userResult.insertId);
+            if (userError) throw userError;
+
+            console.log('User account created successfully. User ID:', userData[0].id);
 
             // Initialize leave balance for current year (0 leaves initially)
             try {
                 const currentYear = new Date().getFullYear();
 
-                const [tables] = await connection.query("SHOW TABLES LIKE 'leave_balance'");
+                // Check if leave_balance table exists by trying to insert
+                const { error: balanceError } = await supabase
+                    .from('leave_balance')
+                    .insert([{
+                        employee_id: employeeId,
+                        leave_year: currentYear,
+                        total_accrued: 0,
+                        total_used: 0,
+                        total_pending: 0,
+                        current_balance: 0
+                    }]);
 
-                if (tables.length > 0) {
-                    await connection.query(
-                        `INSERT INTO leave_balance (employee_id, leave_year, total_accrued, total_used, total_pending, current_balance) 
-                         VALUES (?, ?, 0, 0, 0, 0)`,
-                        [employeeId, currentYear]
-                    );
+                if (balanceError && balanceError.code === '42P01') { // Table doesn't exist
+                    console.log('Leave balance table does not exist, skipping...');
+                } else if (balanceError) {
+                    console.log('Error inserting leave balance:', balanceError.message);
+                } else {
                     console.log('Leave balance initialized for year', currentYear);
                 }
             } catch (balanceError) {
                 console.log('Leave balance table might not exist, skipping...', balanceError.message);
             }
-
-            // Commit transaction
-            await connection.commit();
-            console.log('Transaction committed successfully');
 
             console.log('Employee creation completed successfully');
             console.log('Login credentials:');
@@ -221,7 +311,7 @@ exports.createEmployee = async (req, res) => {
                 success: true,
                 message: 'Employee created successfully',
                 employeeId,
-                id: employeeResult.insertId,
+                id: employeeData[0].id,
                 email: email,
                 loginCredentials: {
                     email: email,
@@ -230,12 +320,19 @@ exports.createEmployee = async (req, res) => {
             });
 
         } catch (error) {
-            await connection.rollback();
-            console.error('Transaction rolled back due to error');
+            console.error('Transaction failed, rolling back...');
+            
+            // Try to clean up if employee was created but user creation failed
+            if (error.message.includes('user') && employeeId) {
+                try {
+                    await supabase.from('employees').delete().eq('employee_id', employeeId);
+                    console.log('Cleaned up employee record after user creation failure');
+                } catch (cleanupError) {
+                    console.error('Failed to clean up employee:', cleanupError);
+                }
+            }
+            
             throw error;
-        } finally {
-            connection.release();
-            console.log('Database connection released');
         }
 
     } catch (error) {
@@ -244,122 +341,51 @@ exports.createEmployee = async (req, res) => {
         console.error('Error name:', error.name);
         console.error('Error message:', error.message);
         console.error('Error code:', error.code);
-        console.error('SQL message:', error.sqlMessage);
-        console.error('SQL state:', error.sqlState);
-        console.error('SQL:', error.sql);
+        console.error('Error details:', error.details);
+        console.error('Error hint:', error.hint);
         console.error('Stack:', error.stack);
         console.error('='.repeat(50));
 
         let errorMessage = 'Error creating employee';
         let statusCode = 500;
 
-        if (error.code === 'ER_DUP_ENTRY') {
-            errorMessage = 'Employee ID already exists';
+        if (error.code === '23505') { // PostgreSQL duplicate key error
+            errorMessage = 'Employee ID or email already exists';
             statusCode = 409;
-        } else if (error.code === 'ER_NO_REFERENCED_ROW') {
+        } else if (error.code === '23503') { // Foreign key violation
             errorMessage = 'Foreign key constraint failed';
             statusCode = 400;
-        } else if (error.code === 'ER_BAD_NULL_ERROR') {
+        } else if (error.code === '23502') { // Not null violation
             errorMessage = 'Required field cannot be null';
             statusCode = 400;
-        } else if (error.code === 'ER_BAD_FIELD_ERROR') {
+        } else if (error.code === '42703') { // Undefined column
             errorMessage = 'Database column mismatch. Please check if all columns exist.';
             statusCode = 500;
-        } else if (error.sqlMessage) {
-            errorMessage = `Database error: ${error.sqlMessage}`;
+        } else if (error.message) {
+            errorMessage = `Database error: ${error.message}`;
         }
 
         res.status(statusCode).json({
             success: false,
             message: errorMessage,
             error: error.message,
-            sqlMessage: error.sqlMessage,
             code: error.code
         });
-    }
-};
-
-// Generate Employee ID with 2-digit sequence - FIXED VERSION
-const generateEmployeeIdBasedOnJoiningDate = async (joiningDate) => {
-    const date = new Date(joiningDate);
-    const year = date.getFullYear().toString().slice(-2);
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-
-    try {
-        console.log('Generating employee ID for joining date:', joiningDate);
-        console.log('Year:', year, 'Month:', month);
-
-        // First, check what's the maximum sequence number for this month
-        const [result] = await db.query(
-            `SELECT employee_id FROM employees 
-             WHERE employee_id LIKE CONCAT('B2B', ?, ?, '%')
-             ORDER BY CAST(SUBSTRING(employee_id, -2) AS UNSIGNED) DESC 
-             LIMIT 1`,
-            [year, month]
-        );
-
-        let nextSequence = 1;
-
-        if (result.length > 0) {
-            // Extract the last 2 digits from the existing ID
-            const lastId = result[0].employee_id;
-            const lastSequence = parseInt(lastId.slice(-2));
-            nextSequence = lastSequence + 1;
-            console.log('Last sequence found:', lastSequence, 'Next sequence:', nextSequence);
-        } else {
-            console.log('No existing employees for this month, starting with sequence 01');
-        }
-
-        // Ensure sequence doesn't exceed 99
-        if (nextSequence > 99) {
-            throw new Error('Maximum employees for this month reached (99)');
-        }
-
-        // Format sequence as 2 digits with leading zero
-        const sequence = nextSequence.toString().padStart(2, '0');
-        const employeeId = `B2B${year}${month}${sequence}`;
-
-        // Double-check if this ID already exists (extra safety)
-        const [existing] = await db.query(
-            'SELECT employee_id FROM employees WHERE employee_id = ?',
-            [employeeId]
-        );
-
-        if (existing.length > 0) {
-            console.log('Generated ID already exists, trying next sequence');
-            // If it exists, try the next number recursively
-            return await generateEmployeeIdBasedOnJoiningDate(joiningDate);
-        }
-
-        console.log('Generated Employee ID:', {
-            joiningDate,
-            year,
-            month,
-            nextSequence,
-            sequence,
-            employeeId
-        });
-
-        return employeeId;
-    } catch (error) {
-        console.error('Error generating employee ID:', error);
-        // Fallback with timestamp + random to ensure uniqueness
-        const timestamp = Date.now().toString().slice(-4);
-        const random = Math.floor(Math.random() * 90 + 10).toString();
-        return `B2B${year}${month}${timestamp.slice(-2)}`;
     }
 };
 
 // Get all employees (for admin)
 exports.getAllEmployees = async (req, res) => {
     try {
-        const [employees] = await db.query(`
-            SELECT * FROM employees 
-            ORDER BY created_at DESC
-        `);
+        const { data: employees, error } = await supabase
+            .from('employees')
+            .select('*')
+            .order('created_at', { ascending: false });
 
-        console.log(`Found ${employees.length} employees`);
-        res.json(employees);
+        if (error) throw error;
+
+        console.log(`Found ${employees?.length || 0} employees`);
+        res.json(employees || []);
     } catch (error) {
         console.error('Error fetching employees:', error);
         res.status(500).json({ message: 'Error fetching employees' });
@@ -371,12 +397,14 @@ exports.getEmployeeById = async (req, res) => {
     try {
         const { id } = req.params;
         
-        const [employees] = await db.query(
-            'SELECT * FROM employees WHERE id = ?',
-            [id]
-        );
+        const { data: employees, error } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('id', id);
+
+        if (error) throw error;
         
-        if (employees.length === 0) {
+        if (!employees || employees.length === 0) {
             return res.status(404).json({ message: 'Employee not found' });
         }
 
@@ -392,12 +420,14 @@ exports.getEmployeeProfile = async (req, res) => {
     try {
         const { employeeId } = req.params;
         
-        const [employees] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employeeId]
-        );
+        const { data: employees, error } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('employee_id', employeeId);
+
+        if (error) throw error;
         
-        if (employees.length === 0) {
+        if (!employees || employees.length === 0) {
             return res.status(404).json({ message: 'Employee not found' });
         }
 
@@ -419,24 +449,21 @@ exports.updateEmployee = async (req, res) => {
         delete updates.employee_id;
         delete updates.created_at;
 
-        const [result] = await db.query(
-            'UPDATE employees SET ? WHERE id = ?',
-            [updates, id]
-        );
+        const { data, error } = await supabase
+            .from('employees')
+            .update(updates)
+            .eq('id', id)
+            .select();
 
-        if (result.affectedRows === 0) {
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
             return res.status(404).json({ message: 'Employee not found' });
         }
 
-        // Fetch updated employee
-        const [updatedEmployee] = await db.query(
-            'SELECT * FROM employees WHERE id = ?',
-            [id]
-        );
-
         res.json({
             message: 'Employee updated successfully',
-            employee: updatedEmployee[0]
+            employee: data[0]
         });
     } catch (error) {
         console.error('Error updating employee:', error);
@@ -450,22 +477,34 @@ exports.deleteEmployee = async (req, res) => {
         const { id } = req.params;
 
         // First get the employee to know their employee_id
-        const [employee] = await db.query(
-            'SELECT employee_id FROM employees WHERE id = ?',
-            [id]
-        );
+        const { data: employee, error: fetchError } = await supabase
+            .from('employees')
+            .select('employee_id')
+            .eq('id', id);
 
-        if (employee.length === 0) {
+        if (fetchError) throw fetchError;
+
+        if (!employee || employee.length === 0) {
             return res.status(404).json({ message: 'Employee not found' });
         }
 
         const employeeId = employee[0].employee_id;
 
         // Delete from users table first (due to foreign key)
-        await db.query('DELETE FROM users WHERE employee_id = ?', [employeeId]);
+        const { error: userError } = await supabase
+            .from('users')
+            .delete()
+            .eq('employee_id', employeeId);
+
+        if (userError) throw userError;
 
         // Then delete from employees table
-        const [result] = await db.query('DELETE FROM employees WHERE id = ?', [id]);
+        const { error: empError } = await supabase
+            .from('employees')
+            .delete()
+            .eq('id', id);
+
+        if (empError) throw empError;
 
         res.json({
             message: 'Employee deleted successfully',
@@ -517,29 +556,26 @@ exports.uploadDocuments = async (req, res) => {
 
         // Update employee record with file paths
         if (Object.keys(uploadedFiles).length > 0) {
-            // Build the SET clause dynamically
-            const setClause = Object.keys(uploadedFiles)
-                .map(key => `${key} = ?`)
-                .join(', ');
-            
-            const values = [...Object.values(uploadedFiles), employeeId];
-            
-            const [result] = await db.query(
-                `UPDATE employees SET ${setClause} WHERE employee_id = ?`,
-                values
-            );
+            const { data, error } = await supabase
+                .from('employees')
+                .update(uploadedFiles)
+                .eq('employee_id', employeeId)
+                .select();
+
+            if (error) throw error;
 
             console.log('Database update result:', {
-                affectedRows: result.affectedRows,
-                changedRows: result.changedRows
+                updated: data?.length || 0
             });
         }
 
         // Fetch the updated employee to verify
-        const [updatedEmployee] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employeeId]
-        );
+        const { data: updatedEmployee, error: fetchError } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('employee_id', employeeId);
+
+        if (fetchError) throw fetchError;
 
         console.log('Updated employee records:', updatedEmployee[0]);
 
@@ -561,8 +597,7 @@ exports.uploadDocuments = async (req, res) => {
         res.status(500).json({ 
             success: false, 
             message: 'Error uploading documents',
-            error: error.message,
-            sqlMessage: error.sqlMessage
+            error: error.message
         });
     }
 };
@@ -574,8 +609,9 @@ exports.getEmployeeDocuments = async (req, res) => {
         
         console.log('Fetching documents for employee:', employeeId);
         
-        const [employees] = await db.query(
-            `SELECT 
+        const { data: employees, error } = await supabase
+            .from('employees')
+            .select(`
                 profile_image, 
                 appointment_letter, 
                 offer_letter, 
@@ -583,13 +619,16 @@ exports.getEmployeeDocuments = async (req, res) => {
                 aadhar_card, 
                 pan_card,
                 relieving_letter,
-                salary_slip 
-            FROM employees 
-            WHERE employee_id = ?`,
-            [employeeId]
-        );
+                salary_slip,
+                bank_proof,
+                education_certificates,
+                experience_certificates
+            `)
+            .eq('employee_id', employeeId);
 
-        if (employees.length === 0) {
+        if (error) throw error;
+
+        if (!employees || employees.length === 0) {
             return res.status(404).json({ message: 'Employee not found' });
         }
 
@@ -624,12 +663,14 @@ exports.downloadDocument = async (req, res) => {
         console.log('='.repeat(50));
 
         // First, try to find the employee by id or employee_id
-        const [employees] = await db.query(
-            'SELECT * FROM employees WHERE id = ? OR employee_id = ?',
-            [employeeId, employeeId]
-        );
+        const { data: employees, error } = await supabase
+            .from('employees')
+            .select('*')
+            .or(`id.eq.${employeeId},employee_id.eq.${employeeId}`);
 
-        if (employees.length === 0) {
+        if (error) throw error;
+
+        if (!employees || employees.length === 0) {
             console.log('Employee not found for ID:', employeeId);
             return res.status(404).json({ message: 'Employee not found' });
         }

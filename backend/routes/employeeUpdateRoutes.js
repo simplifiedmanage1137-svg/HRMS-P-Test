@@ -1,11 +1,9 @@
-// routes/employeeUpdateRoutes.js
 const express = require('express');
 const router = express.Router();
-const db = require('../config/database');
+const supabase = require('../config/supabase');
 const { verifyToken } = require('../middleware/auth');
 
-// routes/employeeUpdateRoutes.js
-// routes/employeeUpdateRoutes.js
+// Get pending requests for employee
 router.get('/pending-requests', verifyToken, async (req, res) => {
     try {
         console.log('='.repeat(50));
@@ -22,47 +20,41 @@ router.get('/pending-requests', verifyToken, async (req, res) => {
             });
         }
 
-        // Check if table exists
-        const [tables] = await db.query("SHOW TABLES LIKE 'update_requests'");
-        console.log('📊 Table exists:', tables.length > 0);
+        // Check if table exists using information_schema
+        const { data: tables, error: tableError } = await supabase
+            .from('information_schema.tables')
+            .select('table_name')
+            .eq('table_name', 'update_requests')
+            .eq('table_schema', 'public');
+
+        if (tableError) {
+            console.error('❌ Error checking table:', tableError);
+        }
+
+        console.log('📊 Table exists:', tables && tables.length > 0);
         
-        if (tables.length === 0) {
+        if (!tables || tables.length === 0) {
             return res.json([]);
         }
 
-        const [requests] = await db.query(
-            `SELECT * FROM update_requests 
-             WHERE employee_id = ? AND status IN ('pending', 'in_progress')
-             ORDER BY created_at DESC`,
-            [req.employeeId]
-        );
+        const { data: requests, error } = await supabase
+            .from('update_requests')
+            .select('*')
+            .eq('employee_id', req.employeeId)
+            .in('status', ['pending', 'in_progress'])
+            .order('created_at', { ascending: false });
 
-        console.log(`📊 Found ${requests.length} requests for employee ${req.employeeId}`);
+        if (error) throw error;
+
+        console.log(`📊 Found ${requests?.length || 0} requests for employee ${req.employeeId}`);
         
-        if (requests.length > 0) {
+        if (requests && requests.length > 0) {
             console.log('📊 First request:', requests[0]);
         }
 
-        // Parse JSON fields
-        const formattedRequests = requests.map(req => {
-            try {
-                return {
-                    ...req,
-                    requested_fields: req.requested_fields ? JSON.parse(req.requested_fields) : [],
-                    employee_data: req.employee_data ? JSON.parse(req.employee_data) : null
-                };
-            } catch (e) {
-                console.error('Error parsing JSON for request:', req.id, e);
-                return {
-                    ...req,
-                    requested_fields: [],
-                    employee_data: null
-                };
-            }
-        });
-
-        console.log(`✅ Sending ${formattedRequests.length} formatted requests`);
-        res.json(formattedRequests);
+        // Format requests (JSON fields are already parsed by Supabase)
+        console.log(`✅ Sending ${requests?.length || 0} formatted requests`);
+        res.json(requests || []);
 
     } catch (error) {
         console.error('❌ Error fetching pending requests:', error);
@@ -79,12 +71,14 @@ router.get('/request/:requestId', verifyToken, async (req, res) => {
     try {
         const { requestId } = req.params;
 
-        const [requests] = await db.query(
-            `SELECT * FROM update_requests WHERE id = ?`,
-            [requestId]
-        );
+        const { data: requests, error } = await supabase
+            .from('update_requests')
+            .select('*')
+            .eq('id', requestId);
 
-        if (requests.length === 0) {
+        if (error) throw error;
+
+        if (!requests || requests.length === 0) {
             return res.status(404).json({ 
                 success: false, 
                 message: 'Request not found' 
@@ -101,10 +95,6 @@ router.get('/request/:requestId', verifyToken, async (req, res) => {
             });
         }
 
-        // Parse JSON fields
-        request.requested_fields = JSON.parse(request.requested_fields || '[]');
-        request.employee_data = request.employee_data ? JSON.parse(request.employee_data) : null;
-
         res.json(request);
 
     } catch (error) {
@@ -117,23 +107,24 @@ router.get('/request/:requestId', verifyToken, async (req, res) => {
     }
 });
 
-// routes/employeeUpdateRoutes.js - Accept request endpoint
-// routes/employeeUpdateRoutes.js - Fix the accept-request endpoint
+// Accept request endpoint
 router.post('/accept-request/:requestId', verifyToken, async (req, res) => {
     try {
         const { requestId } = req.params;
         
         console.log('📝 Accepting request:', requestId);
         console.log('👤 Employee ID from token:', req.employeeId);
-        console.log('👤 User from token:', req.user);
 
         // Check if request exists and belongs to this employee
-        const [requests] = await db.query(
-            'SELECT * FROM update_requests WHERE id = ? AND employee_id = ?',
-            [requestId, req.employeeId]
-        );
+        const { data: requests, error: fetchError } = await supabase
+            .from('update_requests')
+            .select('*')
+            .eq('id', requestId)
+            .eq('employee_id', req.employeeId);
 
-        if (requests.length === 0) {
+        if (fetchError) throw fetchError;
+
+        if (!requests || requests.length === 0) {
             console.log('❌ Request not found or does not belong to employee');
             return res.status(404).json({ 
                 success: false, 
@@ -154,12 +145,17 @@ router.post('/accept-request/:requestId', verifyToken, async (req, res) => {
         }
 
         // Update status to in_progress
-        const [updateResult] = await db.query(
-            'UPDATE update_requests SET status = ? WHERE id = ?',
-            ['in_progress', requestId]
-        );
+        const { error: updateError } = await supabase
+            .from('update_requests')
+            .update({ 
+                status: 'in_progress',
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', requestId);
 
-        console.log('✅ Request updated:', updateResult);
+        if (updateError) throw updateError;
+
+        console.log('✅ Request updated successfully');
 
         res.json({ 
             success: true, 
@@ -178,21 +174,18 @@ router.post('/accept-request/:requestId', verifyToken, async (req, res) => {
 
 // Employee submits updated data
 router.post('/submit-update', verifyToken, async (req, res) => {
-    let connection;
     try {
         const { requestId, updatedData } = req.body;
 
-        connection = await db.getConnection();
-        await connection.beginTransaction();
-
         // Get request
-        const [requests] = await connection.query(
-            `SELECT * FROM update_requests WHERE id = ?`,
-            [requestId]
-        );
+        const { data: requests, error: fetchError } = await supabase
+            .from('update_requests')
+            .select('*')
+            .eq('id', requestId);
 
-        if (requests.length === 0) {
-            await connection.rollback();
+        if (fetchError) throw fetchError;
+
+        if (!requests || requests.length === 0) {
             return res.status(404).json({ 
                 success: false, 
                 message: 'Request not found' 
@@ -203,7 +196,6 @@ router.post('/submit-update', verifyToken, async (req, res) => {
 
         // Verify ownership
         if (request.employee_id !== req.employeeId) {
-            await connection.rollback();
             return res.status(403).json({ 
                 success: false, 
                 message: 'Access denied' 
@@ -212,7 +204,6 @@ router.post('/submit-update', verifyToken, async (req, res) => {
 
         // Check status
         if (request.status !== 'in_progress') {
-            await connection.rollback();
             return res.status(400).json({ 
                 success: false, 
                 message: 'Request is not in progress' 
@@ -220,33 +211,57 @@ router.post('/submit-update', verifyToken, async (req, res) => {
         }
 
         // Update request with employee data
-        await connection.query(
-            `UPDATE update_requests 
-             SET status = 'completed', employee_data = ?, updated_at = NOW() 
-             WHERE id = ?`,
-            [JSON.stringify(updatedData), requestId]
-        );
+        const { error: updateError } = await supabase
+            .from('update_requests')
+            .update({ 
+                status: 'completed',
+                employee_data: updatedData,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', requestId);
+
+        if (updateError) throw updateError;
+
+        // Get admin users for notification
+        const { data: admins, error: adminError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('role', 'admin')
+            .limit(1);
+
+        if (adminError) throw adminError;
 
         // Create notification for admin
-        const [admins] = await connection.query(
-            `SELECT id FROM users WHERE role = 'admin' LIMIT 1`
-        );
+        if (admins && admins.length > 0) {
+            // Check notification table columns
+            const { data: notifColumns, error: colError } = await supabase
+                .from('information_schema.columns')
+                .select('column_name')
+                .eq('table_name', 'admin_notifications')
+                .eq('table_schema', 'public');
 
-        if (admins.length > 0) {
-            await connection.query(
-                `INSERT INTO admin_notifications 
-                 (admin_id, title, message, type, reference_id, created_at) 
-                 VALUES (?, ?, ?, 'update_completed', ?, NOW())`,
-                [
-                    admins[0].id,
-                    'Employee Update Submitted',
-                    `Employee ${req.employeeId} has submitted their information update for approval.`,
-                    requestId
-                ]
-            );
+            const columnNames = notifColumns?.map(col => col.column_name) || [];
+
+            const notificationData = {
+                admin_id: admins[0].id,
+                message: `Employee ${req.employeeId} has submitted their information update for approval.`,
+                type: 'update_completed',
+                reference_id: requestId,
+                created_at: new Date().toISOString()
+            };
+
+            if (columnNames.includes('title')) {
+                notificationData.title = 'Employee Update Submitted';
+            }
+
+            const { error: notifError } = await supabase
+                .from('admin_notifications')
+                .insert([notificationData]);
+
+            if (notifError) {
+                console.log('⚠️ Could not create admin notification:', notifError.message);
+            }
         }
-
-        await connection.commit();
 
         res.json({ 
             success: true,
@@ -254,36 +269,28 @@ router.post('/submit-update', verifyToken, async (req, res) => {
         });
 
     } catch (error) {
-        if (connection) await connection.rollback();
         console.error('❌ Error submitting update:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Error submitting update',
             error: error.message 
         });
-    } finally {
-        if (connection) connection.release();
     }
 });
 
 // Get completed requests for employee (history)
 router.get('/completed-requests', verifyToken, async (req, res) => {
     try {
-        const [requests] = await db.query(
-            `SELECT * FROM update_requests 
-             WHERE employee_id = ? AND status IN ('approved', 'rejected')
-             ORDER BY updated_at DESC`,
-            [req.employeeId]
-        );
+        const { data: requests, error } = await supabase
+            .from('update_requests')
+            .select('*')
+            .eq('employee_id', req.employeeId)
+            .in('status', ['approved', 'rejected'])
+            .order('updated_at', { ascending: false });
 
-        // Parse JSON fields
-        const formattedRequests = requests.map(req => ({
-            ...req,
-            requested_fields: JSON.parse(req.requested_fields || '[]'),
-            employee_data: req.employee_data ? JSON.parse(req.employee_data) : null
-        }));
+        if (error) throw error;
 
-        res.json(formattedRequests);
+        res.json(requests || []);
 
     } catch (error) {
         console.error('❌ Error fetching completed requests:', error);
@@ -298,15 +305,17 @@ router.get('/completed-requests', verifyToken, async (req, res) => {
 // Get count of pending notifications for employee
 router.get('/notification-count', verifyToken, async (req, res) => {
     try {
-        const [result] = await db.query(
-            `SELECT COUNT(*) as count FROM update_requests 
-             WHERE employee_id = ? AND status = 'pending'`,
-            [req.employeeId]
-        );
+        const { count, error } = await supabase
+            .from('update_requests')
+            .select('*', { count: 'exact', head: true })
+            .eq('employee_id', req.employeeId)
+            .eq('status', 'pending');
+
+        if (error) throw error;
 
         res.json({ 
             success: true,
-            count: result[0].count 
+            count: count || 0 
         });
 
     } catch (error) {
@@ -322,19 +331,23 @@ router.get('/notification-count', verifyToken, async (req, res) => {
 // Get current employee data for editing
 router.get('/current-data', verifyToken, async (req, res) => {
     try {
-        const [employees] = await db.query(
-            `SELECT * FROM employees WHERE employee_id = ?`,
-            [req.employeeId]
-        );
+        const { data: employees, error } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('employee_id', req.employeeId)
+            .single();
 
-        if (employees.length === 0) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Employee not found' 
-            });
+        if (error) {
+            if (error.code === 'PGRST116') {
+                return res.status(404).json({ 
+                    success: false, 
+                    message: 'Employee not found' 
+                });
+            }
+            throw error;
         }
 
-        res.json(employees[0]);
+        res.json(employees);
 
     } catch (error) {
         console.error('❌ Error fetching employee data:', error);
@@ -346,24 +359,23 @@ router.get('/current-data', verifyToken, async (req, res) => {
     }
 });
 
-// routes/employeeUpdateRoutes.js mein yeh add karein
-
 // Get admin notifications for employee
 router.get('/admin-notifications', verifyToken, async (req, res) => {
     try {
         console.log('📋 Fetching admin notifications for employee:', req.employeeId);
         
-        const [notifications] = await db.query(
-            `SELECT * FROM notifications 
-             WHERE employee_id = ? 
-             ORDER BY created_at DESC 
-             LIMIT 10`,
-            [req.employeeId]
-        );
+        const { data: notifications, error } = await supabase
+            .from('notifications')
+            .select('*')
+            .eq('employee_id', req.employeeId)
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+        if (error) throw error;
 
         res.json({
             success: true,
-            notifications
+            notifications: notifications || []
         });
 
     } catch (error) {
@@ -372,6 +384,147 @@ router.get('/admin-notifications', verifyToken, async (req, res) => {
             success: false, 
             message: 'Error fetching notifications',
             error: error.message 
+        });
+    }
+});
+
+// Get all pending requests (for admin dashboard)
+router.get('/admin/pending-requests', verifyToken, async (req, res) => {
+    try {
+        // Check if user is admin
+        if (req.userRole !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Admin access required'
+            });
+        }
+
+        const { data: requests, error } = await supabase
+            .from('update_requests')
+            .select(`
+                *,
+                employees!inner(first_name, last_name, email, department, designation)
+            `)
+            .eq('status', 'completed')
+            .order('updated_at', { ascending: false });
+
+        if (error) throw error;
+
+        // Format requests with employee details
+        const formattedRequests = (requests || []).map(req => ({
+            ...req,
+            employee_first_name: req.employees?.first_name,
+            employee_last_name: req.employees?.last_name,
+            employee_email: req.employees?.email,
+            employee_department: req.employees?.department,
+            employee_designation: req.employees?.designation,
+            employees: undefined
+        }));
+
+        res.json(formattedRequests);
+
+    } catch (error) {
+        console.error('❌ Error fetching admin pending requests:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching requests',
+            error: error.message
+        });
+    }
+});
+
+// Admin approves/rejects completed request
+router.post('/admin/handle-completed/:requestId', verifyToken, async (req, res) => {
+    try {
+        const { requestId } = req.params;
+        const { action, comments } = req.body;
+
+        // Check if user is admin
+        if (req.userRole !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Admin access required'
+            });
+        }
+
+        if (!['approve', 'reject'].includes(action)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Action must be approve or reject'
+            });
+        }
+
+        // Get request details
+        const { data: requests, error: fetchError } = await supabase
+            .from('update_requests')
+            .select('*')
+            .eq('id', requestId)
+            .eq('status', 'completed')
+            .single();
+
+        if (fetchError || !requests) {
+            return res.status(404).json({
+                success: false,
+                message: 'Completed request not found'
+            });
+        }
+
+        const request = requests;
+        const newStatus = action === 'approve' ? 'approved' : 'rejected';
+
+        // Update request status
+        const { error: updateError } = await supabase
+            .from('update_requests')
+            .update({
+                status: newStatus,
+                admin_comments: comments || null,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', requestId);
+
+        if (updateError) throw updateError;
+
+        // If approved, update employee data
+        if (action === 'approve' && request.employee_data) {
+            const { error: empUpdateError } = await supabase
+                .from('employees')
+                .update(request.employee_data)
+                .eq('employee_id', request.employee_id);
+
+            if (empUpdateError) throw empUpdateError;
+        }
+
+        // Create notification for employee
+        const notificationMessage = action === 'approve' 
+            ? 'Your information update request has been approved by admin.'
+            : `Your information update request has been rejected by admin.${comments ? ' Reason: ' + comments : ''}`;
+
+        const { error: notifError } = await supabase
+            .from('notifications')
+            .insert([{
+                employee_id: request.employee_id,
+                title: `Update Request ${action === 'approve' ? 'Approved' : 'Rejected'}`,
+                message: notificationMessage,
+                type: `update_${action === 'approve' ? 'approved' : 'rejected'}`,
+                reference_id: requestId,
+                created_at: new Date().toISOString()
+            }]);
+
+        if (notifError) {
+            console.log('⚠️ Could not create notification:', notifError.message);
+        }
+
+        res.json({
+            success: true,
+            message: `Request ${action === 'approve' ? 'approved' : 'rejected'} successfully`
+        });
+
+    } catch (error) {
+        console.error('❌ Error handling completed request:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error processing request',
+            error: error.message
         });
     }
 });

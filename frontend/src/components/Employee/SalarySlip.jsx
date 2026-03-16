@@ -1,4 +1,4 @@
-// src/components/Employee/SalarySlip.jsx
+// SalarySlip.jsx - Updated import section
 import React, { useState, useEffect } from 'react';
 import {
   Row,
@@ -19,7 +19,6 @@ import {
   FaPrint,
   FaEye,
   FaCalendarAlt,
-  FaRupeeSign,
   FaMoneyBillWave,
   FaHistory,
   FaTimes,
@@ -27,7 +26,6 @@ import {
   FaInfoCircle,
   FaClock,
   FaUserTie,
-  FaSortNumericDown,
   FaExclamationTriangle
 } from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
@@ -38,11 +36,18 @@ import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
+// 👇 Use public folder path instead of import
+const companyLogo = '/images/b2bindemand_logo.jfif';
+
+
+// 👇 Alternative: If using public folder, use this instead
+// const companyLogo = '/images/logo.png';
+
 const SalarySlip = () => {
   const { user } = useAuth();
   const { showNotification } = useNotification();
   const navigate = useNavigate();
-  
+
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [salarySlips, setSalarySlips] = useState([]);
@@ -52,12 +57,13 @@ const SalarySlip = () => {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [joiningInfo, setJoiningInfo] = useState(null);
   const [eligibleMonths, setEligibleMonths] = useState([]);
-  
+  const [logoError, setLogoError] = useState(false);
+
   // Set current month as default
   const today = new Date();
   const currentMonth = today.getMonth() + 1;
   const currentYear = today.getFullYear();
-  
+
   const [selectedMonth, setSelectedMonth] = useState(currentMonth.toString());
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [availableYears, setAvailableYears] = useState([]);
@@ -104,17 +110,17 @@ const SalarySlip = () => {
 
   const generateEligibleMonths = (joiningInfo) => {
     if (!joiningInfo) return;
-    
+
     const currentDate = new Date();
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
-    
+
     const eligible = [];
-    
+
     // Start from joining month/year
     let year = joiningInfo.year;
     let month = joiningInfo.month;
-    
+
     // Loop until current month
     while (year < currentYear || (year === currentYear && month <= currentMonth)) {
       eligible.push({
@@ -122,14 +128,14 @@ const SalarySlip = () => {
         month: month,
         label: `${months.find(m => m.value === month)?.label} ${year}`
       });
-      
+
       month++;
       if (month > 12) {
         month = 1;
         year++;
       }
     }
-    
+
     setEligibleMonths(eligible);
   };
 
@@ -147,13 +153,17 @@ const SalarySlip = () => {
     try {
       setLoading(true);
       const response = await axios.get(API_ENDPOINTS.SALARY_EMPLOYEE(user.employeeId));
-      setSalarySlips(response.data.salarySlips || []);
-      
+      const allSlips = response.data.salarySlips || [];
+
+      setAllSalarySlips(allSlips); // Store all slips
+
+      // Get last 5 slips for display
+      const lastFive = getLastFiveSlips(allSlips);
+      setDisplaySlips(lastFive);
+
       if (response.data.joiningInfo) {
         setJoiningInfo(response.data.joiningInfo);
         generateEligibleMonths(response.data.joiningInfo);
-        
-        // After setting joiningInfo, regenerate year options
         setTimeout(() => generateYearOptions(), 100);
       }
     } catch (error) {
@@ -169,20 +179,20 @@ const SalarySlip = () => {
 
   const isMonthEligible = (month, year) => {
     if (!joiningInfo) return true;
-    
+
     const requestedDate = new Date(year, month - 1, 1);
     const joiningDate = new Date(joiningInfo.year, joiningInfo.month - 1, 1);
     const currentDate = new Date();
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1;
-    
+
     // Check if requested date is before joining
     if (requestedDate < joiningDate) return false;
-    
+
     // Check if requested date is in the future
     if (year > currentYear) return false;
     if (year === currentYear && month > currentMonth) return false;
-    
+
     return true;
   };
 
@@ -201,13 +211,13 @@ const SalarySlip = () => {
       const requestedDate = new Date(selectedYear, selectedMonth - 1, 1);
       const joiningDate = new Date(joiningInfo.year, joiningInfo.month - 1, 1);
       const currentDate = new Date();
-      
+
       if (requestedDate < joiningDate) {
         errorMessage = `You cannot generate salary slip for months before your joining date (${joiningInfo.formattedDate})`;
       } else if (requestedDate > currentDate) {
         errorMessage = 'You cannot generate salary slip for future months';
       }
-      
+
       setMessage({
         type: 'danger',
         text: errorMessage
@@ -215,8 +225,8 @@ const SalarySlip = () => {
       return;
     }
 
-    // Check if slip already exists for this month/year
-    const existingSlip = salarySlips.find(
+    // Check if slip already exists
+    const existingSlip = allSalarySlips.find(
       slip => slip.month === parseInt(selectedMonth) && slip.year === parseInt(selectedYear)
     );
 
@@ -234,19 +244,27 @@ const SalarySlip = () => {
     setMessage({ type: '', text: '' });
 
     try {
+      console.log('📤 Generating salary slip for:', {
+        employee_id: user.employeeId,
+        month: parseInt(selectedMonth),
+        year: parseInt(selectedYear)
+      });
+
       const response = await axios.post(API_ENDPOINTS.SALARY_GENERATE, {
         employee_id: user.employeeId,
         month: parseInt(selectedMonth),
         year: parseInt(selectedYear)
       });
 
+      console.log('✅ Salary slip generated:', response.data);
+
       setMessage({
         type: 'success',
         text: 'Salary slip generated successfully!'
       });
 
-      // Refresh salary slips
-      fetchSalarySlips();
+      // Refresh all slips
+      await fetchSalarySlips();
 
       // Show the generated slip
       if (response.data.salarySlip) {
@@ -255,10 +273,21 @@ const SalarySlip = () => {
       }
 
     } catch (error) {
-      console.error('Error generating salary slip:', error);
+      console.error('❌ Error generating salary slip:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+
+      let errorMsg = error.response?.data?.message || 'Failed to generate salary slip';
+
+      if (error.response?.status === 403) {
+        errorMsg = 'You do not have permission to generate salary slips. Please contact admin.';
+      } else if (error.response?.status === 401) {
+        errorMsg = 'Your session has expired. Please login again.';
+      }
+
       setMessage({
         type: 'danger',
-        text: error.response?.data?.message || 'Failed to generate salary slip'
+        text: errorMsg
       });
     } finally {
       setGenerating(false);
@@ -270,11 +299,38 @@ const SalarySlip = () => {
     setShowSlipModal(true);
   };
 
+  // Helper function to convert image to base64 for PDF
+  const getBase64Image = async (imagePath) => {
+    try {
+      // If it's an imported asset (webpack handles this)
+      if (imagePath.startsWith('data:') || imagePath.startsWith('blob:')) {
+        return imagePath.split(',')[1];
+      }
+
+      // Fetch the image
+      const response = await fetch(imagePath);
+      const blob = await response.blob();
+
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64String = reader.result.split(',')[1];
+          resolve(base64String);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.error('Error converting image to base64:', error);
+      return '';
+    }
+  };
+
   const handleDownloadPDF = async (slip) => {
     if (!slip || !employee) return;
 
     setSelectedSlip(slip);
-    
+
     try {
       setMessage({
         type: 'info',
@@ -282,6 +338,14 @@ const SalarySlip = () => {
       });
 
       const { basicSalary, deduction, netSalary } = getSlipAmounts(slip);
+
+      // Get logo as base64 for PDF
+      let logoBase64 = '';
+      try {
+        logoBase64 = await getBase64Image(companyLogo);
+      } catch (logoErr) {
+        console.warn('Could not load logo for PDF:', logoErr);
+      }
 
       // Create PDF content as a string with proper HTML
       const pdfContent = `
@@ -301,6 +365,12 @@ const SalarySlip = () => {
             .header {
               text-align: center;
               margin-bottom: 20px;
+            }
+            .logo {
+              height: 60px;
+              width: auto;
+              margin-bottom: 10px;
+              object-fit: contain;
             }
             .header h1 {
               font-size: 28px;
@@ -405,8 +475,9 @@ const SalarySlip = () => {
         </head>
         <body>
           <div class="header">
-            <h1>B2BinDemand</h1>
-            <p>B2BinDemand, 8th Floor SkyVista, 805, Mhada Colony, Viman Nagar, Pune, Maharashtra 411014</p>
+            ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" class="logo" alt="Logo" />` : ''}
+            
+            <p>8th Floor SkyVista, 805, Mhada Colony, Viman Nagar, Pune, Maharashtra 411014</p>
           </div>
 
           <div class="title">
@@ -420,7 +491,6 @@ const SalarySlip = () => {
             </tr>
             <tr>
               <td><strong>Date of Joining:</strong> ${new Date(employee?.joining_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</td>
-              
             </tr>
           </table>
 
@@ -471,7 +541,6 @@ const SalarySlip = () => {
                 <td>Total Deductions</td>
                 <td class="text-danger">${formatCurrency(deduction)}</td>
               </tr>
-              <!-- NET SALARY - FIXED: Now shows basic salary minus deduction -->
               <tr class="fw-bold" style="border-top: 2px solid #000;">
                 <td>NET SALARY</td>
                 <td class="text-success">${formatCurrency(netSalary)}</td>
@@ -564,10 +633,9 @@ const SalarySlip = () => {
       currency: 'INR',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    }).format(amount || 0).replace('₹', '');
+    }).format(amount || 0).replace('₹', '').trim();
   };
 
-  // FIXED: Correct calculation function
   const getSlipAmounts = (slip) => {
     if (!slip) {
       return { basicSalary: 0, deduction: 0, netSalary: 0 };
@@ -581,13 +649,13 @@ const SalarySlip = () => {
     // Get deduction (DT - Fixed Deduction)
     const deduction = Number(slip.dt) || 200;
 
-    // FIXED: Calculate net salary = basic salary - deduction
+    // Calculate net salary = basic salary - deduction
     const netSalary = basicSalary - deduction;
 
     return {
       basicSalary,
       deduction,
-      netSalary
+      netSalary: netSalary < 0 ? 0 : netSalary
     };
   };
 
@@ -599,10 +667,10 @@ const SalarySlip = () => {
   const selectedSlipAmounts = selectedSlip ? getSlipAmounts(selectedSlip) : { basicSalary: 0, deduction: 0, netSalary: 0 };
 
   const getStatusBadge = (isPaid) => {
-    return isPaid ? 
+    return isPaid ?
       <Badge bg="success" className="px-3 py-2 small">
         <FaCheckCircle className="me-1" size={10} /> Paid
-      </Badge> : 
+      </Badge> :
       <Badge bg="warning" className="px-3 py-2 small">
         <FaClock className="me-1" size={10} /> Pending
       </Badge>;
@@ -612,9 +680,9 @@ const SalarySlip = () => {
     const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
       'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
     const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-    
+
     if (num === 0) return 'Zero';
-    
+
     const numToWords = (n) => {
       if (n < 20) return ones[n];
       if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
@@ -623,9 +691,32 @@ const SalarySlip = () => {
       if (n < 10000000) return numToWords(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + numToWords(n % 100000) : '');
       return numToWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + numToWords(n % 10000000) : '');
     };
-    
+
     return numToWords(num) + ' Only';
   };
+
+  // Handle logo error
+  const handleLogoError = () => {
+    setLogoError(true);
+  };
+
+  const getLastFiveSlips = (slips) => {
+    if (!slips || slips.length === 0) return [];
+
+    // Sort by year and month descending (newest first)
+    const sortedSlips = [...slips].sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      return b.month - a.month;
+    });
+
+    // Return only first 5 (latest)
+    return sortedSlips.slice(0, 5);
+  };
+
+  // Update the salarySlips state to store all slips but show only last 5
+  const [allSalarySlips, setAllSalarySlips] = useState([]); // Store all slips
+  const [displaySlips, setDisplaySlips] = useState([]); // Store last 5 for display
+
 
   if (loading) {
     return (
@@ -654,9 +745,9 @@ const SalarySlip = () => {
 
       {/* Alert Messages */}
       {message.text && (
-        <Alert 
-          variant={message.type} 
-          onClose={() => setMessage({ type: '', text: '' })} 
+        <Alert
+          variant={message.type}
+          onClose={() => setMessage({ type: '', text: '' })}
           dismissible
           className="mb-4 shadow-sm small"
         >
@@ -734,8 +825,8 @@ const SalarySlip = () => {
                       const isCurrentMonth = month.value === currentMonth && selectedYear === currentYear;
                       const isEligible = isMonthEligible(month.value, selectedYear);
                       return (
-                        <option 
-                          key={month.value} 
+                        <option
+                          key={month.value}
                           value={month.value}
                           disabled={!isEligible}
                         >
@@ -745,7 +836,7 @@ const SalarySlip = () => {
                       );
                     })}
                   </Form.Select>
-                  
+
                   {/* Show validation message if needed */}
                   {selectedMonth && selectedYear && joiningInfo && !isMonthEligible(selectedMonth, selectedYear) && (
                     <div className="mt-1 text-danger small">
@@ -789,15 +880,21 @@ const SalarySlip = () => {
         {/* Right Column - Salary Slips History and Employee Details */}
         <Col lg={8}>
           {/* Salary Slips History Card */}
+          {/* Salary Slips History Card */}
           <Card className="mb-4 shadow-sm border-0">
             <Card.Header className="bg-light text-dark py-2 d-flex justify-content-between align-items-center">
               <h6 className="mb-0 fw-semibold small">
                 <FaHistory className="me-2" size={14} />
-                Salary Slip History
+                Salary Slip History 
               </h6>
-              <Badge bg="light" text="dark" className="px-2 py-1 small">
-                {salarySlips.length} {salarySlips.length === 1 ? 'Slip' : 'Slips'}
-              </Badge>
+              <div>
+                <Badge bg="light" text="dark" className="px-2 py-1 small me-2">
+                  Total: {allSalarySlips.length} Slips
+                </Badge>
+                <Badge bg="primary" className="px-2 py-1 small">
+                  Showing: {displaySlips.length} Latest
+                </Badge>
+              </div>
             </Card.Header>
             <Card.Body className="p-0">
               {/* Table with Vertical Scroll */}
@@ -815,8 +912,8 @@ const SalarySlip = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {salarySlips.length > 0 ? (
-                      salarySlips.map((slip, index) => {
+                    {displaySlips.length > 0 ? (
+                      displaySlips.map((slip, index) => {
                         const isCurrentMonth = slip.month === currentMonth && slip.year === currentYear;
                         const { basicSalary, deduction, netSalary } = getSlipAmounts(slip);
 
@@ -866,13 +963,13 @@ const SalarySlip = () => {
                           </div>
                           <h6 className="text-muted small">No Salary Slips Found</h6>
                           <p className="text-muted mb-2 small">
-                            {joiningInfo ? 
+                            {joiningInfo ?
                               `Generate your first salary slip for ${months.find(m => m.value === joiningInfo.month)?.label} ${joiningInfo.year}` :
                               'Generate your first salary slip using the form'
                             }
                           </p>
-                          <Button 
-                            variant="outline-primary" 
+                          <Button
+                            variant="outline-primary"
                             size="sm"
                             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
                           >
@@ -884,6 +981,16 @@ const SalarySlip = () => {
                     )}
                   </tbody>
                 </Table>
+
+                {/* Show message if there are more than 5 slips */}
+                {allSalarySlips.length > 5 && (
+                  <div className="text-center mt-2 mb-2">
+                    <Badge bg="info" className="px-3 py-2 small">
+                      <FaInfoCircle className="me-1" size={10} />
+                      Showing last 5 of {allSalarySlips.length} total slips
+                    </Badge>
+                  </div>
+                )}
               </div>
             </Card.Body>
           </Card>
@@ -931,9 +1038,9 @@ const SalarySlip = () => {
       </Row>
 
       {/* Salary Slip Modal */}
-      <Modal 
-        show={showSlipModal} 
-        onHide={() => setShowSlipModal(false)} 
+      <Modal
+        show={showSlipModal}
+        onHide={() => setShowSlipModal(false)}
         size="lg"
         centered
         className="salary-slip-modal"
@@ -946,19 +1053,33 @@ const SalarySlip = () => {
         </Modal.Header>
         <Modal.Body className="p-3" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
           {selectedSlip && employee && (
-            <div className="salary-slip-content p-3" style={{ 
+            <div className="salary-slip-content p-3" style={{
               fontFamily: 'Arial, sans-serif',
               maxWidth: '800px',
               margin: '0 auto',
               background: 'white'
             }}>
-              {/* Company Header */}
+              {/* Company Header with Logo */}
               <div className="text-center mb-3">
-                <h1 className="fw-bold" style={{ fontSize: '24px', color: '#000', marginBottom: '3px' }}>
-                  B2BinDemand
-                </h1>
+                {/* 👇 Logo added here */}
+                {!logoError ? (
+                  <img
+                    src={companyLogo}
+                    alt="B2BinDemand Logo"
+                    onError={handleLogoError}
+                    style={{
+                      height: '60px',
+                      width: 'auto',
+                      marginBottom: '10px',
+                      objectFit: 'contain'
+                    }}
+                  />
+                ) : (
+                  // Fallback if logo doesn't load
+                  <div style={{ height: '60px', marginBottom: '10px' }}></div>
+                )}
                 <p className="small text-muted mb-0">
-                  B2BinDemand, 8th Floor SkyVista, 805, Mhada Colony, Viman Nagar, Pune, Maharashtra 411014
+                  8th Floor SkyVista, 805, Mhada Colony, Viman Nagar, Pune, Maharashtra 411014
                 </p>
               </div>
 
@@ -987,9 +1108,9 @@ const SalarySlip = () => {
               </table>
 
               {/* Earnings Table */}
-              <table className="w-100 mb-3" style={{ fontSize: '13px' }}>
+              <table className="w-100 mb-3" style={{ fontSize: '13px', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr className="border-top border-bottom">
+                  <tr style={{ borderTop: '1px solid #000', borderBottom: '1px solid #000' }}>
                     <th className="text-start py-2 ps-2">Earnings</th>
                     <th className="text-end py-2 pe-2">Amount (₹)</th>
                   </tr>
@@ -1001,7 +1122,7 @@ const SalarySlip = () => {
                       {formatCurrency(selectedSlipAmounts.basicSalary)}
                     </td>
                   </tr>
-                  <tr className="bg-light">
+                  <tr style={{ backgroundColor: '#f2f2f2' }}>
                     <td className="fw-bold py-1 ps-2">Gross Earnings</td>
                     <td className="text-end fw-bold py-1 pe-2">
                       {formatCurrency(selectedSlipAmounts.basicSalary)}
@@ -1011,9 +1132,9 @@ const SalarySlip = () => {
               </table>
 
               {/* Deductions Table */}
-              <table className="w-100 mb-3" style={{ fontSize: '13px' }}>
+              <table className="w-100 mb-3" style={{ fontSize: '13px', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr className="border-top border-bottom">
+                  <tr style={{ borderTop: '1px solid #000', borderBottom: '1px solid #000' }}>
                     <th className="text-start py-2 ps-2">Deductions</th>
                     <th className="text-end py-2 pe-2">Amount (₹)</th>
                   </tr>
@@ -1022,13 +1143,13 @@ const SalarySlip = () => {
                   <tr><td className="py-1 ps-2">PF (Provident Fund)</td><td className="text-end py-1 pe-2">0</td></tr>
                   <tr><td className="py-1 ps-2">ESI (Employee State Insurance)</td><td className="text-end py-1 pe-2">0</td></tr>
                   <tr><td className="py-1 ps-2">TDS (Tax Deducted at Source)</td><td className="text-end py-1 pe-2">0</td></tr>
-                  <tr className="bg-warning bg-opacity-25">
+                  <tr style={{ backgroundColor: '#fff3cd' }}>
                     <td className="fw-bold py-1 ps-2">DT (Fixed Deduction)</td>
                     <td className="text-end fw-bold text-danger py-1 pe-2">
                       {formatCurrency(selectedSlipAmounts.deduction)}
                     </td>
                   </tr>
-                  <tr className="bg-light">
+                  <tr style={{ backgroundColor: '#f2f2f2' }}>
                     <td className="fw-bold py-1 ps-2">Total Deductions</td>
                     <td className="text-end fw-bold text-danger py-1 pe-2">
                       {formatCurrency(selectedSlipAmounts.deduction)}

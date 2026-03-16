@@ -1,5 +1,5 @@
-const db = require('../config/database');
 const { v4: uuidv4 } = require('uuid');
+const supabase = require('../config/supabase');
 
 // Generate unique session ID
 const generateSessionId = () => {
@@ -47,7 +47,6 @@ const parseTimeString = (timeStr) => {
 };
 
 // Clock in
-
 exports.clockIn = async (req, res) => {
     try {
         console.log('='.repeat(70));
@@ -66,19 +65,21 @@ exports.clockIn = async (req, res) => {
         }
 
         // Get employee details
-        const [employee] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employee_id]
-        );
+        const { data: employees, error: empError } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('employee_id', employee_id);
 
-        if (employee.length === 0) {
+        if (empError) throw empError;
+
+        if (!employees || employees.length === 0) {
             return res.status(404).json({
                 success: false,
                 message: 'Employee not found'
             });
         }
 
-        const emp = employee[0];
+        const emp = employees[0];
         const now = new Date();
 
         // Get today's date in LOCAL timezone
@@ -117,32 +118,67 @@ exports.clockIn = async (req, res) => {
         const lateMinutes = isLate ? diffMs / (1000 * 60) : 0;
         const earlyMinutes = isEarly ? Math.abs(diffMs) / (1000 * 60) : 0;
 
-        const connection = await db.getConnection();
-        await connection.beginTransaction();
-
+        // Start transaction - Supabase doesn't support transactions directly
+        // We'll use a series of operations with error handling
+        
         try {
             // ALWAYS create a new attendance record for each clock-in
-            // This allows multiple sessions per day
-            await connection.query(
-                `INSERT INTO attendance 
-                 (employee_id, attendance_date, clock_in, late_minutes, early_minutes,
-                  latitude, longitude, location_accuracy, session_id, shift_time_used) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [employee_id, today, now, lateMinutes, earlyMinutes, latitude, longitude, accuracy, sessionId, shiftDisplay]
-            );
+            const { error: attendanceError } = await supabase
+                .from('attendance')
+                .insert([{
+                    employee_id,
+                    attendance_date: today,
+                    clock_in: now.toISOString(),
+                    late_minutes: lateMinutes,
+                    early_minutes: earlyMinutes,
+                    latitude,
+                    longitude,
+                    location_accuracy: accuracy,
+                    session_id: sessionId,
+                    shift_time_used: shiftDisplay
+                }]);
 
-            // Create active session
-            await connection.query(
-                `INSERT INTO attendance_sessions 
-                 (employee_id, session_id, clock_in_time, last_heartbeat, is_active) 
-                 VALUES (?, ?, ?, ?, true)
-                 ON DUPLICATE KEY UPDATE
-                 last_heartbeat = NOW(), is_active = true`,
-                [employee_id, sessionId, now, now]
-            );
+            if (attendanceError) throw attendanceError;
 
-            await connection.commit();
-            connection.release();
+            // Check if session already exists
+            const { data: existingSession, error: checkError } = await supabase
+                .from('attendance_sessions')
+                .select('*')
+                .eq('session_id', sessionId);
+
+            if (checkError) throw checkError;
+
+            if (existingSession && existingSession.length === 0) {
+                // Create new session
+                const { error: sessionError } = await supabase
+                    .from('attendance_sessions')
+                    .insert([{
+                        employee_id,
+                        session_id: sessionId,
+                        clock_in_time: now.toISOString(),
+                        last_heartbeat: now.toISOString(),
+                        is_active: true,
+                        latitude,
+                        longitude,
+                        location_accuracy: accuracy
+                    }]);
+
+                if (sessionError) throw sessionError;
+            } else {
+                // Update existing session
+                const { error: sessionError } = await supabase
+                    .from('attendance_sessions')
+                    .update({
+                        last_heartbeat: now.toISOString(),
+                        is_active: true,
+                        latitude,
+                        longitude,
+                        location_accuracy: accuracy
+                    })
+                    .eq('session_id', sessionId);
+
+                if (sessionError) throw sessionError;
+            }
 
             // Prepare response message
             let status = 'On Time';
@@ -203,8 +239,7 @@ exports.clockIn = async (req, res) => {
             res.json(response);
 
         } catch (error) {
-            await connection.rollback();
-            connection.release();
+            console.error('❌ Transaction error:', error);
             throw error;
         }
 
@@ -218,6 +253,7 @@ exports.clockIn = async (req, res) => {
     }
 };
 
+// Clock out
 exports.clockOut = async (req, res) => {
     try {
         console.log('='.repeat(70));
@@ -248,36 +284,35 @@ exports.clockOut = async (req, res) => {
 
         console.log(`🔍 Looking for active session: ${session_id} for employee: ${employee_id}`);
 
-        const connection = await db.getConnection();
-        await connection.beginTransaction();
-
         try {
             // 1. First, find the active session
-            const [activeSessions] = await connection.query(
-                `SELECT * FROM attendance_sessions 
-                 WHERE session_id = ? 
-                 AND employee_id = ? 
-                 AND is_active = true`,
-                [session_id, employee_id]
-            );
+            const { data: activeSessions, error: sessionError } = await supabase
+                .from('attendance_sessions')
+                .select('*')
+                .eq('session_id', session_id)
+                .eq('employee_id', employee_id)
+                .eq('is_active', true);
 
-            console.log(`Found ${activeSessions.length} active sessions`);
+            if (sessionError) throw sessionError;
 
-            if (activeSessions.length === 0) {
+            console.log(`Found ${activeSessions?.length || 0} active sessions`);
+
+            let session;
+            let attendanceRecord;
+
+            if (!activeSessions || activeSessions.length === 0) {
                 // Try to find by employee_id only as fallback
-                const [fallbackSessions] = await connection.query(
-                    `SELECT * FROM attendance_sessions 
-                     WHERE employee_id = ? 
-                     AND is_active = true 
-                     ORDER BY clock_in_time DESC 
-                     LIMIT 1`,
-                    [employee_id]
-                );
+                const { data: fallbackSessions, error: fallbackError } = await supabase
+                    .from('attendance_sessions')
+                    .select('*')
+                    .eq('employee_id', employee_id)
+                    .eq('is_active', true)
+                    .order('clock_in_time', { ascending: false })
+                    .limit(1);
 
-                if (fallbackSessions.length === 0) {
-                    await connection.rollback();
-                    connection.release();
+                if (fallbackError) throw fallbackError;
 
+                if (!fallbackSessions || fallbackSessions.length === 0) {
                     console.log('❌ No active session found for employee:', employee_id);
 
                     return res.status(400).json({
@@ -288,176 +323,68 @@ exports.clockOut = async (req, res) => {
                 }
 
                 console.log('Using fallback session:', fallbackSessions[0].session_id);
-
-                // Use the fallback session
-                const session = fallbackSessions[0];
+                session = fallbackSessions[0];
 
                 // Find attendance record for this session
-                const [attendanceRecords] = await connection.query(
-                    `SELECT * FROM attendance 
-                     WHERE employee_id = ? 
-                     AND session_id = ? 
-                     AND clock_in IS NOT NULL 
-                     AND clock_out IS NULL`,
-                    [employee_id, session.session_id]
-                );
+                const { data: attendanceRecords, error: attendanceError } = await supabase
+                    .from('attendance')
+                    .select('*')
+                    .eq('employee_id', employee_id)
+                    .eq('session_id', session.session_id)
+                    .is('clock_out', null);
 
-                if (attendanceRecords.length === 0) {
-                    await connection.rollback();
-                    connection.release();
+                if (attendanceError) throw attendanceError;
 
+                if (!attendanceRecords || attendanceRecords.length === 0) {
                     return res.status(400).json({
                         success: false,
                         message: 'No matching attendance record found for the active session.'
                     });
                 }
 
-                // Calculate hours and update using the found session
-                const record = attendanceRecords[0];
-                const clockIn = new Date(record.clock_in);
-                const totalMs = now - clockIn;
-                const totalHours = totalMs / (1000 * 60 * 60);
-                const totalHoursRounded = Math.round(totalHours * 100) / 100;
+                attendanceRecord = attendanceRecords[0];
+            } else {
+                // Use the primary session found
+                session = activeSessions[0];
+                console.log('✅ Found active session:', session);
 
-                // Determine status
-                let status = 'present';
-                if (totalHours < 4) {
-                    status = 'absent';
-                } else if (totalHours < 8) {
-                    status = 'half_day';
+                // Find the corresponding attendance record
+                const { data: attendanceRecords, error: attendanceError } = await supabase
+                    .from('attendance')
+                    .select('*')
+                    .eq('employee_id', employee_id)
+                    .eq('session_id', session_id)
+                    .is('clock_out', null);
+
+                if (attendanceError) throw attendanceError;
+
+                if (!attendanceRecords || attendanceRecords.length === 0) {
+                    // Try without session_id filter as fallback
+                    const { data: fallbackAttendance, error: fallbackError } = await supabase
+                        .from('attendance')
+                        .select('*')
+                        .eq('employee_id', employee_id)
+                        .is('clock_out', null)
+                        .order('clock_in', { ascending: false })
+                        .limit(1);
+
+                    if (fallbackError) throw fallbackError;
+
+                    if (!fallbackAttendance || fallbackAttendance.length === 0) {
+                        return res.status(400).json({
+                            success: false,
+                            message: 'No matching attendance record found for this session.'
+                        });
+                    }
+
+                    attendanceRecord = fallbackAttendance[0];
+                } else {
+                    attendanceRecord = attendanceRecords[0];
                 }
-
-                console.log(`📊 Hours worked: ${totalHoursRounded}, Status: ${status}`);
-
-                // Update attendance record
-                await connection.query(
-                    `UPDATE attendance 
-                     SET clock_out = ?,
-                         total_hours = ?,
-                         status = ?,
-                         latitude = COALESCE(?, latitude),
-                         longitude = COALESCE(?, longitude),
-                         location_accuracy = COALESCE(?, location_accuracy)
-                     WHERE id = ?`,
-                    [now, totalHoursRounded, status, latitude, longitude, accuracy, record.id]
-                );
-
-                // Deactivate session
-                await connection.query(
-                    `UPDATE attendance_sessions 
-                     SET is_active = false,
-                         clock_out_time = ?
-                     WHERE id = ?`,
-                    [now, session.id]
-                );
-
-                await connection.commit();
-                connection.release();
-
-                return res.json({
-                    success: true,
-                    message: `✅ Clocked out successfully. ${status === 'present' ? 'Full day' : status === 'half_day' ? 'Half day' : 'Absent'}`,
-                    clock_out: now,
-                    total_hours: totalHoursRounded,
-                    status,
-                    session_id: session.session_id
-                });
             }
-
-            // Use the primary session found
-            const session = activeSessions[0];
-            console.log('✅ Found active session:', session);
-
-            // Find the corresponding attendance record
-            const [attendanceRecords] = await connection.query(
-                `SELECT * FROM attendance 
-                 WHERE employee_id = ? 
-                 AND session_id = ? 
-                 AND clock_in IS NOT NULL 
-                 AND clock_out IS NULL`,
-                [employee_id, session_id]
-            );
-
-            if (attendanceRecords.length === 0) {
-                // Try without session_id filter as fallback
-                const [fallbackAttendance] = await connection.query(
-                    `SELECT * FROM attendance 
-                     WHERE employee_id = ? 
-                     AND DATE(clock_in) = DATE(?)
-                     AND clock_out IS NULL
-                     ORDER BY clock_in DESC
-                     LIMIT 1`,
-                    [employee_id, session.clock_in_time]
-                );
-
-                if (fallbackAttendance.length === 0) {
-                    await connection.rollback();
-                    connection.release();
-
-                    return res.status(400).json({
-                        success: false,
-                        message: 'No matching attendance record found for this session.'
-                    });
-                }
-
-                const record = fallbackAttendance[0];
-
-                // Calculate hours
-                const clockIn = new Date(record.clock_in);
-                const totalMs = now - clockIn;
-                const totalHours = totalMs / (1000 * 60 * 60);
-                const totalHoursRounded = Math.round(totalHours * 100) / 100;
-
-                // Determine status
-                let status = 'present';
-                if (totalHours < 4) {
-                    status = 'absent';
-                } else if (totalHours < 8) {
-                    status = 'half_day';
-                }
-
-                console.log(`📊 Hours worked: ${totalHoursRounded}, Status: ${status}`);
-
-                // Update the record with session_id
-                await connection.query(
-                    `UPDATE attendance 
-                     SET clock_out = ?,
-                         total_hours = ?,
-                         status = ?,
-                         session_id = ?,
-                         latitude = COALESCE(?, latitude),
-                         longitude = COALESCE(?, longitude),
-                         location_accuracy = COALESCE(?, location_accuracy)
-                     WHERE id = ?`,
-                    [now, totalHoursRounded, status, session_id, latitude, longitude, accuracy, record.id]
-                );
-
-                // Deactivate session
-                await connection.query(
-                    `UPDATE attendance_sessions 
-                     SET is_active = false,
-                         clock_out_time = ?
-                     WHERE id = ?`,
-                    [now, session.id]
-                );
-
-                await connection.commit();
-                connection.release();
-
-                return res.json({
-                    success: true,
-                    message: `✅ Clocked out successfully. ${status === 'present' ? 'Full day' : status === 'half_day' ? 'Half day' : 'Absent'}`,
-                    clock_out: now,
-                    total_hours: totalHoursRounded,
-                    status,
-                    session_id
-                });
-            }
-
-            const record = attendanceRecords[0];
 
             // Calculate hours
-            const clockIn = new Date(record.clock_in);
+            const clockIn = new Date(attendanceRecord.clock_in);
             const totalMs = now - clockIn;
             const totalHours = totalMs / (1000 * 60 * 60);
             const totalHoursRounded = Math.round(totalHours * 100) / 100;
@@ -473,29 +400,30 @@ exports.clockOut = async (req, res) => {
             console.log(`📊 Hours worked: ${totalHoursRounded}, Status: ${status}`);
 
             // Update attendance record
-            await connection.query(
-                `UPDATE attendance 
-                 SET clock_out = ?,
-                     total_hours = ?,
-                     status = ?,
-                     latitude = COALESCE(?, latitude),
-                     longitude = COALESCE(?, longitude),
-                     location_accuracy = COALESCE(?, location_accuracy)
-                 WHERE id = ?`,
-                [now, totalHoursRounded, status, latitude, longitude, accuracy, record.id]
-            );
+            const { error: updateAttendanceError } = await supabase
+                .from('attendance')
+                .update({
+                    clock_out: now.toISOString(),
+                    total_hours: totalHoursRounded,
+                    status: status,
+                    latitude: latitude || attendanceRecord.latitude,
+                    longitude: longitude || attendanceRecord.longitude,
+                    location_accuracy: accuracy || attendanceRecord.location_accuracy
+                })
+                .eq('id', attendanceRecord.id);
+
+            if (updateAttendanceError) throw updateAttendanceError;
 
             // Deactivate session
-            await connection.query(
-                `UPDATE attendance_sessions 
-                 SET is_active = false,
-                     clock_out_time = ?
-                 WHERE id = ?`,
-                [now, session.id]
-            );
+            const { error: updateSessionError } = await supabase
+                .from('attendance_sessions')
+                .update({
+                    is_active: false,
+                    clock_out_time: now.toISOString()
+                })
+                .eq('id', session.id);
 
-            await connection.commit();
-            connection.release();
+            if (updateSessionError) throw updateSessionError;
 
             console.log('✅ Clock-out successful');
 
@@ -505,12 +433,10 @@ exports.clockOut = async (req, res) => {
                 clock_out: now,
                 total_hours: totalHoursRounded,
                 status,
-                session_id
+                session_id: session.session_id
             });
 
         } catch (error) {
-            await connection.rollback();
-            connection.release();
             throw error;
         }
 
@@ -527,9 +453,7 @@ exports.clockOut = async (req, res) => {
     }
 };
 
-// attendanceController.js - Add more detailed error logging
-
-// attendanceController.js - Fixed getTodayAttendance
+// Get today's attendance
 exports.getTodayAttendance = async (req, res) => {
     try {
         const { employee_id } = req.params;
@@ -554,12 +478,14 @@ exports.getTodayAttendance = async (req, res) => {
 
         // First check if employee exists
         console.log('📊 Checking if employee exists with ID:', employee_id);
-        const [employee] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employee_id]
-        );
+        const { data: employees, error: empError } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('employee_id', employee_id);
 
-        if (employee.length === 0) {
+        if (empError) throw empError;
+
+        if (!employees || employees.length === 0) {
             console.log('❌ Employee not found:', employee_id);
             return res.status(404).json({
                 success: false,
@@ -567,52 +493,48 @@ exports.getTodayAttendance = async (req, res) => {
             });
         }
 
-        console.log('✅ Employee found:', employee[0].first_name, employee[0].last_name);
+        const employee = employees[0];
+        console.log('✅ Employee found:', employee.first_name, employee.last_name);
 
         // Get today's attendance record
-        console.log('📊 Querying attendance for date:', todayStr);
-        const [todayAttendance] = await db.query(
-            `SELECT a.*, e.first_name, e.last_name, e.shift_timing 
-             FROM attendance a
-             JOIN employees e ON a.employee_id = e.employee_id
-             WHERE a.employee_id = ? AND DATE(a.attendance_date) = ?
-             ORDER BY a.clock_in DESC
-             LIMIT 1`,
-            [employee_id, todayStr]
-        );
+        const { data: todayAttendance, error: attendanceError } = await supabase
+            .from('attendance')
+            .select(`
+                *,
+                employees!inner(first_name, last_name, shift_timing)
+            `)
+            .eq('employee_id', employee_id)
+            .eq('attendance_date', todayStr)
+            .order('clock_in', { ascending: false })
+            .limit(1);
 
-        console.log('📊 Today attendance records found:', todayAttendance.length);
+        if (attendanceError) throw attendanceError;
+
+        console.log('📊 Today attendance records found:', todayAttendance?.length || 0);
 
         // Get active session if any
-        console.log('📊 Checking for active session');
-        const [activeSession] = await db.query(
-            'SELECT * FROM attendance_sessions WHERE employee_id = ? AND is_active = true',
-            [employee_id]
-        );
+        const { data: activeSession, error: sessionError } = await supabase
+            .from('attendance_sessions')
+            .select('*')
+            .eq('employee_id', employee_id)
+            .eq('is_active', true);
+
+        if (sessionError) throw sessionError;
         
-        console.log('📊 Active session found:', activeSession.length > 0);
+        console.log('📊 Active session found:', activeSession?.length || 0);
 
         // Format the attendance data if it exists
         let formattedAttendance = null;
         
-        if (todayAttendance.length > 0) {
+        if (todayAttendance && todayAttendance.length > 0) {
             formattedAttendance = { ...todayAttendance[0] };
             
-            // Convert attendance_date to YYYY-MM-DD string format if it's a Date object
-            if (formattedAttendance.attendance_date) {
-                // Check if it's a Date object and convert to string
-                if (formattedAttendance.attendance_date instanceof Date) {
-                    const d = formattedAttendance.attendance_date;
-                    const year = d.getFullYear();
-                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    formattedAttendance.attendance_date = `${year}-${month}-${day}`;
-                } 
-                // If it's a string that contains 'T', split it
-                else if (typeof formattedAttendance.attendance_date === 'string' && 
-                         formattedAttendance.attendance_date.includes('T')) {
-                    formattedAttendance.attendance_date = formattedAttendance.attendance_date.split('T')[0];
-                }
+            // Add employee details
+            if (formattedAttendance.employees) {
+                formattedAttendance.first_name = formattedAttendance.employees.first_name;
+                formattedAttendance.last_name = formattedAttendance.employees.last_name;
+                formattedAttendance.shift_timing = formattedAttendance.employees.shift_timing;
+                delete formattedAttendance.employees;
             }
             
             // Calculate late display if applicable
@@ -641,8 +563,8 @@ exports.getTodayAttendance = async (req, res) => {
         const response = {
             success: true,
             attendance: formattedAttendance,
-            active_session: activeSession[0] || null,
-            has_active_session: activeSession.length > 0,
+            active_session: activeSession && activeSession.length > 0 ? activeSession[0] : null,
+            has_active_session: activeSession && activeSession.length > 0,
             today_date: todayStr
         };
 
@@ -653,18 +575,16 @@ exports.getTodayAttendance = async (req, res) => {
         console.error('❌ Error in getTodayAttendance:', error);
         console.error('❌ Error stack:', error.stack);
         console.error('❌ Error message:', error.message);
-        console.error('❌ Error code:', error.code);
         
         res.status(500).json({ 
             success: false, 
             message: 'Failed to get attendance',
-            error: error.message,
-            error_code: error.code
+            error: error.message
         });
     }
 };
 
-// Fixed getAttendanceReport
+// Get attendance report
 exports.getAttendanceReport = async (req, res) => {
     try {
         const { start, end, employee_id } = req.query;
@@ -680,191 +600,83 @@ exports.getAttendanceReport = async (req, res) => {
             });
         }
 
-        // Log the query parameters
-        console.log('📊 Query params:', { start, end, employee_id });
-
-        // Get attendance records
-        let attendanceQuery = `
-            SELECT a.*, e.first_name, e.last_name, e.department, e.shift_timing
-            FROM attendance a
-            JOIN employees e ON a.employee_id = e.employee_id
-            WHERE DATE(a.attendance_date) BETWEEN ? AND ?
-        `;
-        let params = [start, end];
-
-        if (employee_id) {
-            attendanceQuery += ' AND a.employee_id = ?';
-            params.push(employee_id);
-        }
-
-        attendanceQuery += ' ORDER BY a.attendance_date DESC, e.first_name';
-
-        console.log('📊 Executing query:', attendanceQuery);
-        console.log('📊 With params:', params);
-
-        const [attendance] = await db.query(attendanceQuery, params);
-
-        console.log(`📊 Found ${attendance.length} attendance records`);
-
-        // Get leave records for the same period
-        let leaveQuery = `
-            SELECT l.*, e.first_name, e.last_name, e.department
-            FROM leaves l
-            JOIN employees e ON l.employee_id = e.employee_id
-            WHERE l.status = 'approved'
-            AND (
-                (l.start_date BETWEEN ? AND ?) OR
-                (l.end_date BETWEEN ? AND ?) OR
-                (l.start_date <= ? AND l.end_date >= ?)
-            )
-        `;
-        let leaveParams = [start, end, start, end, start, end];
+        // Get attendance records - SIMPLIFIED QUERY
+        let query = supabase
+            .from('attendance')
+            .select(`
+                *,
+                employees (
+                    first_name, 
+                    last_name, 
+                    department, 
+                    shift_timing
+                )
+            `)
+            .gte('attendance_date', start)
+            .lte('attendance_date', end);
 
         if (employee_id) {
-            leaveQuery += ' AND l.employee_id = ?';
-            leaveParams.push(employee_id);
+            query = query.eq('employee_id', employee_id);
         }
 
-        console.log('📊 Executing leave query');
-        const [leaves] = await db.query(leaveQuery, leaveParams);
+        query = query.order('attendance_date', { ascending: false });
 
-        console.log(`📊 Found ${leaves.length} leave records`);
+        const { data: attendance, error: attendanceError } = await query;
 
-        // Combine attendance and leave data
-        const combinedData = [];
-        
-        // Helper function to convert any date to YYYY-MM-DD string
-        const formatDateToString = (date) => {
-            if (!date) return null;
+        if (attendanceError) {
+            console.error('❌ Attendance query error:', attendanceError);
+            throw attendanceError;
+        }
+
+        console.log(`📊 Found ${attendance?.length || 0} attendance records`);
+
+        // Format attendance records
+        const formattedAttendance = (attendance || []).map(record => {
+            // Get employee details from the nested object
+            const employee = record.employees || {};
             
-            if (date instanceof Date) {
-                const year = date.getFullYear();
-                const month = String(date.getMonth() + 1).padStart(2, '0');
-                const day = String(date.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-            }
-            
-            if (typeof date === 'string') {
-                if (date.includes('T')) {
-                    return date.split('T')[0];
-                }
-                return date;
-            }
-            
-            return String(date);
-        };
-        
-        // First, add all attendance records
-        attendance.forEach(record => {
-            // Format the date properly
-            const dateStr = formatDateToString(record.attendance_date);
-            
-            combinedData.push({
-                ...record,
-                attendance_date: dateStr,
-                type: 'attendance'
-            });
+            return {
+                id: record.id,
+                employee_id: record.employee_id,
+                attendance_date: record.attendance_date,
+                clock_in: record.clock_in,
+                clock_out: record.clock_out,
+                total_hours: record.total_hours,
+                status: record.status,
+                late_minutes: record.late_minutes,
+                early_minutes: record.early_minutes,
+                shift_time_used: record.shift_time_used,
+                // Employee details flattened
+                first_name: employee.first_name || '',
+                last_name: employee.last_name || '',
+                department: employee.department || '',
+                shift_timing: employee.shift_timing || '',
+                // Remove nested object
+                employees: undefined
+            };
         });
 
-        // Then add leave records for days without attendance
-        leaves.forEach(leave => {
-            const startDate = new Date(leave.start_date);
-            const endDate = new Date(leave.end_date);
-            
-            // For each day in the leave period
-            for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-                const year = d.getFullYear();
-                const month = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                const dateStr = `${year}-${month}-${day}`;
-                
-                // Check if this date already has an attendance record
-                const existingAttendance = attendance.some(a => {
-                    const aDate = formatDateToString(a.attendance_date);
-                    return aDate === dateStr;
-                });
-                
-                // If no attendance record for this date, add leave record
-                if (!existingAttendance) {
-                    combinedData.push({
-                        type: 'leave',
-                        employee_id: leave.employee_id,
-                        first_name: leave.first_name,
-                        last_name: leave.last_name,
-                        department: leave.department,
-                        attendance_date: dateStr,
-                        leave_type: leave.leave_type,
-                        leave_reason: leave.reason,
-                        status: 'on_leave',
-                        clock_in: null,
-                        clock_out: null,
-                        total_hours: 0,
-                        late_minutes: 0,
-                        early_minutes: 0
-                    });
-                }
-            }
-        });
-
-        // Calculate statistics
-        const stats = {
-            total: combinedData.length,
-            present: combinedData.filter(a => a.status === 'present').length,
-            half_day: combinedData.filter(a => a.status === 'half_day').length,
-            absent: combinedData.filter(a => a.status === 'absent').length,
-            on_leave: combinedData.filter(a => a.status === 'on_leave').length,
-            late: combinedData.filter(a => parseFloat(a.late_minutes || 0) > 0).length,
-            early: combinedData.filter(a => parseFloat(a.early_minutes || 0) > 0).length
-        };
-
-        // Add formatted display to each record
-        const combinedWithDetails = combinedData.map(record => {
-            const recordWithDetails = { ...record };
-            
-            if (record.late_minutes && record.late_minutes > 0) {
-                const totalSeconds = Math.round(record.late_minutes * 60);
-                if (totalSeconds < 60) {
-                    recordWithDetails.late_text = `${totalSeconds}s`;
-                } else {
-                    const mins = Math.floor(totalSeconds / 60);
-                    const secs = totalSeconds % 60;
-                    recordWithDetails.late_text = secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
-                }
-            }
-            
-            if (record.early_minutes && record.early_minutes > 0) {
-                const totalSeconds = Math.round(record.early_minutes * 60);
-                if (totalSeconds < 60) {
-                    recordWithDetails.early_text = `${totalSeconds}s`;
-                } else {
-                    const mins = Math.floor(totalSeconds / 60);
-                    const secs = totalSeconds % 60;
-                    recordWithDetails.early_text = secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
-                }
-            }
-            
-            return recordWithDetails;
-        });
-
-        console.log(`📊 Returning ${combinedWithDetails.length} records`);
-        
+        // Return directly without leave data for now
         res.json({
             success: true,
-            stats,
-            attendance: combinedWithDetails
+            attendance: formattedAttendance,
+            stats: {
+                total: formattedAttendance.length,
+                present: formattedAttendance.filter(a => a.status === 'present').length,
+                half_day: formattedAttendance.filter(a => a.status === 'half_day').length,
+                absent: formattedAttendance.filter(a => a.status === 'absent').length
+            }
         });
 
     } catch (error) {
         console.error('❌ Error in getAttendanceReport:', error);
-        console.error('❌ Error stack:', error.stack);
-        console.error('❌ Error message:', error.message);
-        console.error('❌ Error code:', error.code);
+        console.error('❌ Error details:', error);
         
         res.status(500).json({ 
             success: false, 
             message: 'Failed to get attendance report',
             error: error.message,
-            error_code: error.code
+            details: error.details || error.hint
         });
     }
 };
@@ -874,14 +686,18 @@ exports.heartbeat = async (req, res) => {
     try {
         const { employee_id, session_id, latitude, longitude } = req.body;
 
-        await db.query(
-            `UPDATE attendance_sessions 
-             SET last_heartbeat = NOW(), 
-                 latitude = COALESCE(?, latitude),
-                 longitude = COALESCE(?, longitude)
-             WHERE employee_id = ? AND session_id = ? AND is_active = true`,
-            [latitude, longitude, employee_id, session_id]
-        );
+        const { error } = await supabase
+            .from('attendance_sessions')
+            .update({
+                last_heartbeat: new Date().toISOString(),
+                latitude: latitude,
+                longitude: longitude
+            })
+            .eq('employee_id', employee_id)
+            .eq('session_id', session_id)
+            .eq('is_active', true);
+
+        if (error) throw error;
 
         res.json({ success: true, timestamp: new Date() });
 
@@ -895,33 +711,38 @@ exports.heartbeat = async (req, res) => {
 exports.checkActiveSessions = async () => {
     try {
         // This function now only monitors, doesn't auto clock-out
-        const [activeSessions] = await db.query(
-            `SELECT COUNT(*) as count FROM attendance_sessions 
-             WHERE is_active = true`
-        );
+        const { count: activeCount, error: countError } = await supabase
+            .from('attendance_sessions')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_active', true);
 
-        console.log(`📊 Active sessions: ${activeSessions[0].count}`);
+        if (countError) throw countError;
+
+        console.log(`📊 Active sessions: ${activeCount}`);
 
         // Optional: Send alerts for sessions inactive for too long
         const timeoutMinutes = 60; // Alert after 60 minutes of no heartbeat
-        const [inactiveSessions] = await db.query(
-            `SELECT * FROM attendance_sessions 
-             WHERE is_active = true 
-             AND last_heartbeat < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-            [timeoutMinutes]
-        );
+        const timeoutDate = new Date();
+        timeoutDate.setMinutes(timeoutDate.getMinutes() - timeoutMinutes);
 
-        for (const session of inactiveSessions) {
+        const { data: inactiveSessions, error: inactiveError } = await supabase
+            .from('attendance_sessions')
+            .select('*')
+            .eq('is_active', true)
+            .lt('last_heartbeat', timeoutDate.toISOString());
+
+        if (inactiveError) throw inactiveError;
+
+        for (const session of inactiveSessions || []) {
             console.log(`⚠️ Session ${session.session_id} for employee ${session.employee_id} has been inactive for ${timeoutMinutes}+ minutes`);
-
             // You could send a notification to admin here
             // But DO NOT auto clock-out
         }
 
         return {
             success: true,
-            active: activeSessions[0].count,
-            inactive: inactiveSessions.length
+            active: activeCount,
+            inactive: inactiveSessions?.length || 0
         };
 
     } catch (error) {
@@ -939,37 +760,53 @@ exports.markAbsentAtDayEnd = async () => {
         console.log('📝 Running end-of-day absent marking for:', today);
 
         // Get all employees
-        const [employees] = await db.query('SELECT employee_id FROM employees');
+        const { data: employees, error: empError } = await supabase
+            .from('employees')
+            .select('employee_id');
+
+        if (empError) throw empError;
+
         let markedCount = 0;
         let updatedCount = 0;
 
-        for (const emp of employees) {
+        for (const emp of employees || []) {
             // Check if employee has attendance record for today
-            const [attendance] = await db.query(
-                'SELECT * FROM attendance WHERE employee_id = ? AND attendance_date = ?',
-                [emp.employee_id, today]
-            );
+            const { data: attendance, error: attError } = await supabase
+                .from('attendance')
+                .select('*')
+                .eq('employee_id', emp.employee_id)
+                .eq('attendance_date', today);
+
+            if (attError) throw attError;
 
             // If no record exists, create absent record
-            if (attendance.length === 0) {
-                await db.query(
-                    `INSERT INTO attendance 
-                     (employee_id, attendance_date, status) 
-                     VALUES (?, ?, 'absent')`,
-                    [emp.employee_id, today]
-                );
+            if (!attendance || attendance.length === 0) {
+                const { error: insertError } = await supabase
+                    .from('attendance')
+                    .insert([{
+                        employee_id: emp.employee_id,
+                        attendance_date: today,
+                        status: 'absent'
+                    }]);
+
+                if (insertError) throw insertError;
                 markedCount++;
                 console.log(`✅ Marked absent for employee ${emp.employee_id}`);
             }
             // If record exists but has clock_in and no clock_out, mark as half_day (they forgot to clock out)
             else if (attendance[0].clock_in && !attendance[0].clock_out) {
-                await db.query(
-                    `UPDATE attendance 
-                     SET status = 'half_day',
-                         total_hours = TIMESTAMPDIFF(HOUR, clock_in, NOW())
-                     WHERE employee_id = ? AND attendance_date = ?`,
-                    [emp.employee_id, today]
-                );
+                const clockIn = new Date(attendance[0].clock_in);
+                const totalHours = (now - clockIn) / (1000 * 60 * 60);
+                
+                const { error: updateError } = await supabase
+                    .from('attendance')
+                    .update({
+                        status: 'half_day',
+                        total_hours: totalHours
+                    })
+                    .eq('id', attendance[0].id);
+
+                if (updateError) throw updateError;
                 updatedCount++;
                 console.log(`⚠️ Auto-marked half_day for employee ${emp.employee_id} (forgot to clock out)`);
             }
@@ -983,6 +820,3 @@ exports.markAbsentAtDayEnd = async () => {
         return { success: false, error: error.message };
     }
 };
-
-
-

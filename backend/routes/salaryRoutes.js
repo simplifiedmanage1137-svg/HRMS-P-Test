@@ -1,26 +1,23 @@
+// routes/salaryRoutes.js
 const express = require('express');
 const router = express.Router();
 const salaryController = require('../controllers/salaryController');
+const { verifyToken, isAdmin, isOwnDataOrAdmin } = require('../middleware/auth');
 
-// Get all salary slips for an employee
-router.get('/employee/:employee_id', salaryController.getEmployeeSalarySlips);
+// Employee routes (require authentication)
+router.get('/employee/:employee_id', verifyToken, isOwnDataOrAdmin, salaryController.getEmployeeSalarySlips);
+router.get('/:id', verifyToken, salaryController.getSalarySlipById);
+router.get('/:employee_id/:month/:year', verifyToken, isOwnDataOrAdmin, salaryController.getSalarySlipByMonth);
 
-// Get specific salary slip by ID
-router.get('/:id', salaryController.getSalarySlipById);
+// 👇 IMPORTANT: Employee can generate their own salary slip
+// Make sure this uses isOwnDataOrAdmin, NOT isAdmin
+router.post('/generate', verifyToken, isOwnDataOrAdmin, salaryController.generateSalarySlip);
 
-// Get salary slip by month and year
-router.get('/:employee_id/:month/:year', salaryController.getSalarySlipByMonth);
-
-// Generate salary slip for an employee
-router.post('/generate', salaryController.generateSalarySlip);
-
-// Generate salary slips for all employees (Admin only)
-router.post('/generate-bulk', salaryController.generateBulkSalarySlips);
-
-// Mark salary as paid (Admin only)
-router.put('/:id/mark-paid', salaryController.markAsPaid);
-
-// Delete salary slip (Admin only)
-router.delete('/:id', salaryController.deleteSalarySlip);
+// Admin only routes
+router.post('/generate-bulk', verifyToken, isAdmin, salaryController.generateBulkSalarySlips);
+router.put('/:id/mark-paid', verifyToken, isAdmin, salaryController.markAsPaid);
+router.delete('/:id', verifyToken, isAdmin, salaryController.deleteSalarySlip);
+router.get('/stats/summary', verifyToken, isAdmin, salaryController.getSalaryStatistics);
+router.put('/:id', verifyToken, isAdmin, salaryController.updateSalarySlip);
 
 module.exports = router;

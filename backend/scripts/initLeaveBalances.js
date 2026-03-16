@@ -1,95 +1,226 @@
-const db = require('../config/database');
+const supabase = require('../config/supabase');
 
 async function initializeLeaveBalances() {
+    console.log('='.repeat(70));
+    console.log('🔄 LEAVE BALANCE INITIALIZATION STARTED');
+    console.log('='.repeat(70));
+    
     try {
-        console.log('Starting leave balance initialization...');
-        
         // Get all employees
-        const [employees] = await db.query('SELECT employee_id, joining_date FROM employees');
-        
-        console.log(`Found ${employees.length} employees`);
+        const { data: employees, error: empError } = await supabase
+            .from('employees')
+            .select('employee_id, joining_date, first_name, last_name');
 
-        for (const emp of employees) {
-            const joiningDate = new Date(emp.joining_date);
-            const today = new Date();
-            
-            // Calculate months difference
-            const yearsDiff = today.getFullYear() - joiningDate.getFullYear();
-            let monthsDiff = (yearsDiff * 12) + (today.getMonth() - joiningDate.getMonth());
-            
-            // Adjust for day of month
-            if (today.getDate() < joiningDate.getDate()) {
-                monthsDiff--;
-            }
+        if (empError) throw empError;
 
-            console.log(`\nEmployee: ${emp.employee_id}`);
-            console.log(`Joining Date: ${joiningDate}`);
-            console.log(`Months completed: ${monthsDiff}`);
+        console.log(`📊 Found ${employees?.length || 0} employees`);
+        console.log('='.repeat(70));
 
-            // Calculate accrued leaves (only after 6 months)
-            let totalAccrued = 0;
-            if (monthsDiff >= 6) {
-                const eligibleMonths = monthsDiff - 5;
-                totalAccrued = eligibleMonths * 1.5;
-            }
+        const results = {
+            total: employees?.length || 0,
+            created: 0,
+            updated: 0,
+            failed: 0,
+            details: []
+        };
 
-            // Get used leaves from approved leaves
-            const [usedLeaves] = await db.query(
-                `SELECT SUM(days_count) as total_used FROM leaves 
-                 WHERE employee_id = ? AND status = 'approved'`,
-                [emp.employee_id]
-            );
-            
-            const used = parseFloat(usedLeaves[0]?.total_used || 0);
+        const currentYear = new Date().getFullYear();
 
-            // Get pending leaves
-            const [pendingLeaves] = await db.query(
-                `SELECT SUM(days_count) as total_pending FROM leaves 
-                 WHERE employee_id = ? AND status = 'pending'`,
-                [emp.employee_id]
-            );
-            
-            const pending = parseFloat(pendingLeaves[0]?.total_pending || 0);
-            
-            const currentBalance = totalAccrued - used - pending;
+        for (const emp of employees || []) {
+            try {
+                const joiningDate = new Date(emp.joining_date);
+                const today = new Date();
+                
+                console.log(`\n📋 Processing: ${emp.employee_id} (${emp.first_name} ${emp.last_name})`);
+                console.log(`   Joining Date: ${emp.joining_date}`);
 
-            console.log(`Calculated - Accrued: ${totalAccrued}, Used: ${used}, Pending: ${pending}, Balance: ${currentBalance}`);
+                // Calculate months difference from joining date
+                const yearsDiff = today.getFullYear() - joiningDate.getFullYear();
+                let monthsDiff = (yearsDiff * 12) + (today.getMonth() - joiningDate.getMonth());
+                
+                // Adjust for day of month
+                if (today.getDate() < joiningDate.getDate()) {
+                    monthsDiff--;
+                }
 
-            // Check if balance record exists
-            const [existing] = await db.query(
-                'SELECT * FROM leave_balance WHERE employee_id = ?',
-                [emp.employee_id]
-            );
+                // Ensure monthsDiff is not negative
+                monthsDiff = Math.max(0, monthsDiff);
 
-            if (existing.length > 0) {
-                // Update existing record
-                await db.query(
-                    `UPDATE leave_balance 
-                     SET total_accrued = ?, total_used = ?, total_pending = ?, current_balance = ?
-                     WHERE employee_id = ?`,
-                    [totalAccrued, used, pending, currentBalance, emp.employee_id]
-                );
-                console.log(`Updated balance for ${emp.employee_id}`);
-            } else {
-                // Insert new record
-                await db.query(
-                    `INSERT INTO leave_balance 
-                     (employee_id, total_accrued, total_used, total_pending, current_balance) 
-                     VALUES (?, ?, ?, ?, ?)`,
-                    [emp.employee_id, totalAccrued, used, pending, currentBalance]
-                );
-                console.log(`Created balance for ${emp.employee_id}`);
+                console.log(`   Months completed since joining: ${monthsDiff}`);
+
+                // Calculate accrued leaves (1.5 per month after 6 months)
+                let totalAccrued = 0;
+                if (monthsDiff >= 6) {
+                    const eligibleMonths = monthsDiff - 5; // Months after 6-month probation
+                    totalAccrued = eligibleMonths * 1.5;
+                }
+
+                // Get used leaves from approved leaves
+                const { data: usedLeaves, error: usedError } = await supabase
+                    .from('leaves')
+                    .select('days_count')
+                    .eq('employee_id', emp.employee_id)
+                    .eq('status', 'approved');
+
+                if (usedError) throw usedError;
+
+                const used = usedLeaves?.reduce((sum, leave) => sum + (parseFloat(leave.days_count) || 0), 0) || 0;
+
+                // Get pending leaves
+                const { data: pendingLeaves, error: pendingError } = await supabase
+                    .from('leaves')
+                    .select('days_count')
+                    .eq('employee_id', emp.employee_id)
+                    .eq('status', 'pending');
+
+                if (pendingError) throw pendingError;
+
+                const pending = pendingLeaves?.reduce((sum, leave) => sum + (parseFloat(leave.days_count) || 0), 0) || 0;
+
+                const currentBalance = totalAccrued - used - pending;
+
+                console.log(`   📊 Calculated:`);
+                console.log(`      - Accrued: ${totalAccrued.toFixed(1)} days`);
+                console.log(`      - Used: ${used.toFixed(1)} days`);
+                console.log(`      - Pending: ${pending.toFixed(1)} days`);
+                console.log(`      - Current Balance: ${currentBalance.toFixed(1)} days`);
+
+                // Check if balance record exists for current year
+                const { data: existing, error: checkError } = await supabase
+                    .from('leave_balance')
+                    .select('*')
+                    .eq('employee_id', emp.employee_id)
+                    .eq('leave_year', currentYear)
+                    .maybeSingle();
+
+                if (checkError) throw checkError;
+
+                if (existing) {
+                    // Update existing record
+                    const { error: updateError } = await supabase
+                        .from('leave_balance')
+                        .update({
+                            total_accrued: totalAccrued,
+                            total_used: used,
+                            total_pending: pending,
+                            current_balance: currentBalance,
+                            last_updated: new Date().toISOString()
+                        })
+                        .eq('employee_id', emp.employee_id)
+                        .eq('leave_year', currentYear);
+
+                    if (updateError) throw updateError;
+
+                    results.updated++;
+                    results.details.push({
+                        employee_id: emp.employee_id,
+                        name: `${emp.first_name} ${emp.last_name}`,
+                        action: 'updated',
+                        old_value: {
+                            accrued: existing.total_accrued,
+                            used: existing.total_used,
+                            pending: existing.total_pending,
+                            balance: existing.current_balance
+                        },
+                        new_value: {
+                            accrued: totalAccrued,
+                            used: used,
+                            pending: pending,
+                            balance: currentBalance
+                        }
+                    });
+
+                    console.log(`   ✅ Updated existing balance`);
+                } else {
+                    // Insert new record
+                    const { error: insertError } = await supabase
+                        .from('leave_balance')
+                        .insert([{
+                            employee_id: emp.employee_id,
+                            leave_year: currentYear,
+                            total_accrued: totalAccrued,
+                            total_used: used,
+                            total_pending: pending,
+                            current_balance: currentBalance,
+                            last_updated: new Date().toISOString()
+                        }]);
+
+                    if (insertError) throw insertError;
+
+                    results.created++;
+                    results.details.push({
+                        employee_id: emp.employee_id,
+                        name: `${emp.first_name} ${emp.last_name}`,
+                        action: 'created',
+                        values: {
+                            accrued: totalAccrued,
+                            used: used,
+                            pending: pending,
+                            balance: currentBalance
+                        }
+                    });
+
+                    console.log(`   ✅ Created new balance`);
+                }
+
+                // Add a small delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+            } catch (empError) {
+                results.failed++;
+                results.details.push({
+                    employee_id: emp.employee_id,
+                    name: emp.first_name ? `${emp.first_name} ${emp.last_name}` : emp.employee_id,
+                    action: 'failed',
+                    error: empError.message
+                });
+                console.error(`   ❌ Error processing ${emp.employee_id}:`, empError.message);
             }
         }
 
-        console.log('\n✅ Leave balance initialization completed!');
-        
+        console.log('='.repeat(70));
+        console.log('📊 INITIALIZATION SUMMARY');
+        console.log(`Total employees: ${results.total}`);
+        console.log(`Created: ${results.created}`);
+        console.log(`Updated: ${results.updated}`);
+        console.log(`Failed: ${results.failed}`);
+        console.log('='.repeat(70));
+
+        // Log to initialization_log table if exists
+        try {
+            await supabase
+                .from('initialization_log')
+                .insert([{
+                    type: 'leave_balance',
+                    executed_at: new Date().toISOString(),
+                    summary: {
+                        total: results.total,
+                        created: results.created,
+                        updated: results.updated,
+                        failed: results.failed
+                    },
+                    details: results.details
+                }]);
+            console.log('📝 Results logged to initialization_log table');
+        } catch (logError) {
+            console.log('⚠️ Could not log results (initialization_log table may not exist)');
+        }
+
+        console.log('='.repeat(70));
+        console.log('✅ LEAVE BALANCE INITIALIZATION COMPLETED SUCCESSFULLY!');
+        console.log('='.repeat(70));
+
     } catch (error) {
-        console.error('Error initializing leave balances:', error);
+        console.error('❌ Error initializing leave balances:', error);
+        console.error('Error stack:', error.stack);
     } finally {
-        process.exit();
+        // Uncomment to exit when done
+        // process.exit();
     }
 }
 
 // Run the function
 initializeLeaveBalances();
+
+// Export for use in other files
+module.exports = { initializeLeaveBalances };

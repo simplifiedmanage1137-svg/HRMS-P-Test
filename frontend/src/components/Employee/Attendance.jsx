@@ -1,8 +1,8 @@
 // src/components/Employee/Attendance.jsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Card, Button, Alert, Spinner, Badge,
-  Row, Col, Modal, Table, Form, Tabs, Tab
+  Row, Col, Modal, Table, Tabs, Tab
 } from 'react-bootstrap';
 import {
   FaCheckCircle,
@@ -16,14 +16,8 @@ import {
   FaSignOutAlt,
   FaCalendarAlt,
   FaMoon,
-  FaSun,
   FaCloudSun,
-  FaChartLine,
-  FaHistory,
-  FaArrowLeft,
-  FaArrowRight,
-  FaUserCheck,
-  FaUserClock
+  FaHistory
 } from 'react-icons/fa';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
@@ -66,10 +60,7 @@ const Attendance = () => {
   const [geofenceInfo, setGeofenceInfo] = useState(null);
   const [heartbeatInterval, setHeartbeatInterval] = useState(null);
   const [showExitWarning, setShowExitWarning] = useState(false);
-  const [canClockInToday, setCanClockInToday] = useState(true);
   const [hasClockedOutToday, setHasClockedOutToday] = useState(false);
-
-  // State for attendance reports
   const [attendanceHistory, setAttendanceHistory] = useState([]);
   const [monthlyStats, setMonthlyStats] = useState({
     totalDays: 0,
@@ -137,39 +128,21 @@ const Attendance = () => {
     }
   };
 
-  // Check if user has already clocked out today
-  const checkTodayStatus = (attendanceData) => {
-    if (!attendanceData) return;
-
-    const today = new Date().toDateString();
-    const lastClockOut = attendanceData.last_clock_out;
-
-    if (lastClockOut) {
-      const lastClockOutDate = new Date(lastClockOut).toDateString();
-      if (lastClockOutDate === today) {
-        setHasClockedOutToday(true);
-      }
-    }
-  };
-
   useEffect(() => {
     if (!user?.employeeId) return;
 
-    // Load cached session
     const storedSession = loadSessionFromStorage();
     if (storedSession) {
       setActiveSession(storedSession);
     }
 
     fetchTodayAttendance();
-    fetchAttendanceHistory();
     getCurrentLocation();
 
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
 
-    // Add beforeunload event listener
     const handleBeforeUnload = (e) => {
       if (activeSession) {
         e.preventDefault();
@@ -189,19 +162,16 @@ const Attendance = () => {
     };
   }, [user]);
 
-  // Fetch attendance history when component mounts
   useEffect(() => {
     if (user?.employeeId) {
       fetchAttendanceHistory();
     }
-  }, [user]);
+  }, [user?.employeeId, attendance]);
 
-  // Start heartbeat when active session exists
   useEffect(() => {
     if (activeSession && location) {
       const interval = setInterval(sendHeartbeat, 30000);
       setHeartbeatInterval(interval);
-
       return () => clearInterval(interval);
     }
   }, [activeSession, location]);
@@ -297,10 +267,13 @@ const Attendance = () => {
       const attendanceData = response.data.attendance;
       const serverSession = response.data.active_session;
 
-      // If we have attendance data, set it
       if (attendanceData) {
         setAttendance(attendanceData);
-        checkTodayStatus(attendanceData);
+        
+        // Check if clocked out today
+        if (attendanceData.clock_out) {
+          setHasClockedOutToday(true);
+        }
       }
 
       if (serverSession) {
@@ -333,27 +306,25 @@ const Attendance = () => {
   const fetchAttendanceHistory = async () => {
     try {
       const today = new Date();
-      // Create today at START of day in LOCAL timezone
-      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      
+      const endDate = new Date(today);
+      endDate.setHours(23, 59, 59, 999);
 
-      const endDate = todayStart;
-      const startDate = new Date(todayStart);
+      const startDate = new Date(today);
       startDate.setDate(startDate.getDate() - 30);
+      startDate.setHours(0, 0, 0, 0);
 
-      // Format dates as YYYY-MM-DD using local timezone
-      const formatLocalDate = (date) => {
+      const formatDate = (date) => {
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
       };
 
-      const startDateStr = formatLocalDate(startDate);
-      const endDateStr = formatLocalDate(endDate);
-      const todayStr = formatLocalDate(todayStart);
+      const startDateStr = formatDate(startDate);
+      const endDateStr = formatDate(endDate);
 
       console.log('📅 Fetching attendance from', startDateStr, 'to', endDateStr);
-      console.log('📅 Today is:', todayStr);
 
       const response = await axios.get(
         `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${startDateStr}&end=${endDateStr}&employee_id=${user.employeeId}`
@@ -362,84 +333,9 @@ const Attendance = () => {
       console.log('📊 Attendance API Response:', response.data);
 
       let history = response.data.attendance || [];
-
-      // Log all records to see what we're getting
-      console.log('📊 Raw history records:');
-      history.forEach(record => {
-        console.log(`   - ${record.attendance_date}: clock_in=${record.clock_in ? 'Yes' : 'No'}`);
-      });
-
-      // Create a map to ensure each date has only ONE record
-      const dateMap = new Map();
-
-      history.forEach(record => {
-        if (record.attendance_date) {
-          // Extract just the date part
-          let dateKey;
-          if (record.attendance_date.includes('T')) {
-            dateKey = record.attendance_date.split('T')[0];
-          } else {
-            dateKey = record.attendance_date;
-          }
-
-          // Only keep records within our date range
-          if (dateKey >= startDateStr && dateKey <= endDateStr) {
-            // If we already have a record for this date, keep the one with more data
-            if (!dateMap.has(dateKey)) {
-              dateMap.set(dateKey, record);
-            } else {
-              // If existing record has no clock_in but this one does, replace it
-              const existing = dateMap.get(dateKey);
-              if (!existing.clock_in && record.clock_in) {
-                dateMap.set(dateKey, record);
-              }
-            }
-          }
-        }
-      });
-
-      // Convert map back to array
-      let uniqueHistory = Array.from(dateMap.values());
-
-      console.log('📊 Unique history records:');
-      uniqueHistory.forEach(record => {
-        console.log(`   - ${record.attendance_date}: clock_in=${record.clock_in ? 'Yes' : 'No'}`);
-      });
-
-      // Get today's attendance separately
-      let todayAttendance = null;
-      try {
-        const todayResponse = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
-        todayAttendance = todayResponse.data.attendance;
-        console.log('📊 Today attendance from separate call:', todayAttendance);
-      } catch (todayError) {
-        console.log('⚠️ Could not fetch today attendance separately');
-      }
-
-      // Merge today's attendance with history - but only if it's actually for today
-      if (todayAttendance && todayAttendance.attendance_date) {
-        const todayRecordDate = todayAttendance.attendance_date.split('T')[0];
-
-        // Only use today's attendance if it's actually for today
-        if (todayRecordDate === todayStr) {
-          // Remove any existing record for today
-          uniqueHistory = uniqueHistory.filter(record => {
-            if (!record.attendance_date) return true;
-            const recordDate = record.attendance_date.split('T')[0];
-            return recordDate !== todayStr;
-          });
-
-          // Add today's attendance
-          uniqueHistory.push(todayAttendance);
-
-          console.log('📊 Added today\'s record for date:', todayStr);
-        } else {
-          console.log('⚠️ Today\'s attendance record has wrong date:', todayRecordDate, 'expected:', todayStr);
-        }
-      }
-
-      // Generate complete calendar
-      const completeHistory = generateLast30DaysAttendance(uniqueHistory, startDate, endDate);
+      
+      // Generate complete calendar with all dates
+      const completeHistory = generateLast30DaysAttendance(history, startDate, endDate);
 
       setAttendanceHistory(completeHistory);
       calculateMonthlyStats(completeHistory);
@@ -447,12 +343,10 @@ const Attendance = () => {
 
     } catch (error) {
       console.error('❌ Error fetching attendance history:', error);
-      // Create empty history
       const today = new Date();
-      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const startDate = new Date(todayStart);
+      const startDate = new Date(today);
       startDate.setDate(startDate.getDate() - 30);
-      const emptyHistory = generateLast30DaysAttendance([], startDate, todayStart);
+      const emptyHistory = generateLast30DaysAttendance([], startDate, today);
       setAttendanceHistory(emptyHistory);
       calculateMonthlyStats(emptyHistory);
       updateChartData(emptyHistory);
@@ -463,24 +357,19 @@ const Attendance = () => {
     const completeHistory = [];
     const today = new Date();
 
-    // Format today using local date
-    const todayYear = today.getFullYear();
-    const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
-    const todayDay = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+    const formatDateStr = (date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
 
-    console.log('📊 Today is (local):', todayStr);
-    console.log('📊 History received:', history.map(h => ({
-      date: h.attendance_date,
-      clock_in: h.clock_in,
-      clock_out: h.clock_out
-    })));
+    const todayStr = formatDateStr(today);
 
     // Create a map of existing records
     const historyMap = {};
     history.forEach(record => {
       if (record.attendance_date) {
-        // Extract date part only
         let dateKey;
         if (record.attendance_date.includes('T')) {
           dateKey = record.attendance_date.split('T')[0];
@@ -488,93 +377,63 @@ const Attendance = () => {
           dateKey = record.attendance_date;
         }
 
-        // Check if this record has clock_in but no clock_out (active session)
-        const hasActiveSession = record.clock_in && !record.clock_out;
-
-        historyMap[dateKey] = {
-          ...record,
-          hasActiveSession
-        };
-
-        console.log(`📊 Mapped record for ${dateKey}:`, {
-          clock_in: record.clock_in,
-          clock_out: record.clock_out,
-          hasActiveSession
-        });
+        historyMap[dateKey] = record;
       }
     });
+
+    // Add today's record from attendance state if available and not in history
+    if (attendance && !historyMap[todayStr]) {
+      historyMap[todayStr] = {
+        ...attendance,
+        attendance_date: todayStr
+      };
+    }
 
     // Generate 30 days
     for (let i = 0; i < 30; i++) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
 
-      // Format date as YYYY-MM-DD
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      const dateStr = `${year}-${month}-${day}`;
-
+      const dateStr = formatDateStr(date);
       const dayOfWeek = date.getDay();
-
-      // Check if this is today
       const isToday = dateStr === todayStr;
-
-      // Check if it's a weekly off day (0 = Sunday, 6 = Saturday)
       const isWeeklyOff = dayOfWeek === 0 || dayOfWeek === 6;
-
-      // Check if we have a record for this date
-      const existingRecord = historyMap[dateStr];
-
-      // Get day name
       const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
 
+      const existingRecord = historyMap[dateStr];
+
       if (existingRecord) {
-        // We have a record for this date - USE THE ACTUAL RECORD
+        // Record exists in database
         let displayStatus = existingRecord.status;
-        let displayClockOut = existingRecord.clock_out;
         let totalHours = existingRecord.total_hours;
+        let clockOut = existingRecord.clock_out;
 
-        // If clocked in but not out, show as "Working"
-        if (existingRecord.clock_in && !existingRecord.clock_out) {
+        // If clocked in but not out, show as "Working" for today
+        if (isToday && existingRecord.clock_in && !existingRecord.clock_out) {
           displayStatus = 'working';
-          displayClockOut = 'Working';
-
-          // Calculate current hours if this is today
-          if (isToday && existingRecord.clock_in) {
-            const clockIn = new Date(existingRecord.clock_in);
-            const now = new Date();
-            const currentHours = (now - clockIn) / (1000 * 60 * 60);
-            totalHours = currentHours.toFixed(2);
-          }
+          clockOut = null;
+          
+          // Calculate current hours
+          const clockIn = new Date(existingRecord.clock_in);
+          const now = new Date();
+          totalHours = ((now - clockIn) / (1000 * 60 * 60)).toFixed(2);
         }
 
         completeHistory.push({
-          ...existingRecord,
+          id: existingRecord.id,
           date: dateStr,
           attendance_date: dateStr,
           dayOfWeek,
-          isWeeklyOff: false, // If there's a record, it's not a weekly off
-          displayDate: formatDate(dateStr),
-          dayName: dayName,
-          isToday: isToday,
+          isWeeklyOff: false,
+          dayName,
+          isToday,
           clock_in: existingRecord.clock_in,
-          clock_out: displayClockOut === 'Working' ? null : existingRecord.clock_out,
-          display_clock_out: displayClockOut,
+          clock_out: clockOut,
           total_hours: totalHours,
           status: displayStatus,
           late_minutes: existingRecord.late_minutes || 0,
           late_display: existingRecord.late_display
         });
-
-        // Log today's record specially
-        if (isToday) {
-          console.log('📊 TODAY\'S RECORD ADDED:', {
-            clock_in: existingRecord.clock_in,
-            clock_out: existingRecord.clock_out,
-            status: displayStatus
-          });
-        }
       } else {
         // No record for this date
         let status = 'not_clocked';
@@ -587,35 +446,20 @@ const Attendance = () => {
           attendance_date: dateStr,
           dayOfWeek,
           isWeeklyOff,
-          dayName: dayName,
+          dayName,
           clock_in: null,
           clock_out: null,
           total_hours: null,
           status: status,
           late_minutes: 0,
           late_display: null,
-          isToday: isToday
+          isToday
         });
       }
     }
 
     // Sort by date descending (today first)
-    const sorted = completeHistory.sort((a, b) => {
-      if (a.date > b.date) return -1;
-      if (a.date < b.date) return 1;
-      return 0;
-    });
-
-    // Log the first few records to verify today's data
-    console.log('📊 FINAL SORTED HISTORY (first 5):', sorted.slice(0, 5).map(h => ({
-      date: h.date,
-      isToday: h.isToday,
-      clock_in: h.clock_in ? 'Yes' : 'No',
-      clock_out: h.clock_out ? 'Yes' : 'No',
-      status: h.status
-    })));
-
-    return sorted;
+    return completeHistory.sort((a, b) => b.date.localeCompare(a.date));
   };
 
   const calculateMonthlyStats = (history) => {
@@ -674,7 +518,6 @@ const Attendance = () => {
   };
 
   const updateChartData = (history) => {
-    // Sort by date ascending for chart
     const sortedHistory = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
 
     const labels = [];
@@ -752,13 +595,14 @@ const Attendance = () => {
         text: response.data.message
       });
 
-      setAttendance(prev => ({
-        ...prev,
+      const newAttendance = {
         clock_in: response.data.clock_in,
-        late_minutes: response.data.late_minutes ?? prev?.late_minutes,
-        late_display: response.data.late_display ?? prev?.late_display,
-        status: response.data.status ?? prev?.status
-      }));
+        late_minutes: response.data.late_minutes,
+        late_display: response.data.late_display,
+        status: response.data.status
+      };
+
+      setAttendance(newAttendance);
 
       const session = {
         session_id: response.data.session_id,
@@ -768,10 +612,7 @@ const Attendance = () => {
       saveSessionToStorage(session);
       setHasClockedOutToday(false);
 
-      // Wait a moment for database to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Refresh both today and history data
+      // Refresh data
       await fetchTodayAttendance();
       await fetchAttendanceHistory();
 
@@ -791,54 +632,53 @@ const Attendance = () => {
     setMessage({ type: '', text: '' });
 
     try {
-      // Check if there's an active session
       if (!activeSession) {
-        console.log('No active session in state, checking local storage...');
-
-        // Try to load from localStorage
         const storedSession = loadSessionFromStorage();
-
         if (!storedSession) {
           throw new Error('No active session found. Please clock in first.');
         }
-
-        console.log('Found stored session:', storedSession);
         setActiveSession(storedSession);
-
-        // Continue with the stored session
-        const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_OUT, {
-          employee_id: user.employeeId,
-          session_id: storedSession.session_id,
-          latitude: location?.latitude,
-          longitude: location?.longitude,
-          accuracy: location?.accuracy
-        });
-
-        handleClockOutResponse(response);
-        return;
       }
 
-      console.log('Using active session:', activeSession);
+      const sessionToUse = activeSession || loadSessionFromStorage();
 
       const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_OUT, {
         employee_id: user.employeeId,
-        session_id: activeSession.session_id,
+        session_id: sessionToUse.session_id,
         latitude: location?.latitude,
         longitude: location?.longitude,
         accuracy: location?.accuracy
       });
 
-      handleClockOutResponse(response);
+      console.log('✅ Clock-out response:', response.data);
+
+      setMessage({
+        type: 'success',
+        text: response.data.message
+      });
+
+      // Update attendance with clock-out info
+      setAttendance(prev => ({
+        ...prev,
+        clock_out: response.data.clock_out,
+        total_hours: response.data.total_hours,
+        status: response.data.status
+      }));
+
+      setActiveSession(null);
+      clearSessionFromStorage();
+      setHasClockedOutToday(true);
+
+      // Refresh data
+      await fetchTodayAttendance();
+      await fetchAttendanceHistory();
 
     } catch (error) {
       console.error('Clock-out error:', error);
 
-      // Check if it's the specific "no active session" error
       if (error.response?.data?.error_type === 'NO_ACTIVE_SESSION') {
-        // Clear invalid session
         setActiveSession(null);
         clearSessionFromStorage();
-
         setMessage({
           type: 'warning',
           text: 'Your session has expired. Please clock in again.'
@@ -854,38 +694,11 @@ const Attendance = () => {
     }
   };
 
-  const handleClockOutResponse = (response) => {
-    setMessage({
-      type: 'success',
-      text: response.data.message
-    });
-
-    // Update the main attendance record with the clock-out info
-    setAttendance(prev => ({
-      ...prev,
-      clock_out: response.data.clock_out,  // Set the main clock_out field
-      total_hours: response.data.total_hours,
-      status: response.data.status,
-      // Also keep last session info if needed for history
-      last_session: {
-        clock_out: response.data.clock_out,
-        hours: response.data.total_hours,
-        status: response.data.status
-      }
-    }));
-
-    // Clear the active session so user can clock in again
-    setActiveSession(null);
-    clearSessionFromStorage();
-
-    // Mark that user has clocked out today
-    setHasClockedOutToday(true);
-
-    // Refresh data
-    fetchTodayAttendance();
-    fetchAttendanceHistory();
+  const handleManualClockOut = async () => {
+    setShowExitWarning(false);
+    await handleClockOut();
   };
-  
+
   const getLocationBadge = () => {
     if (locationLoading) {
       return (
@@ -974,7 +787,7 @@ const Attendance = () => {
         }
         return <Badge bg="warning" className="text-dark"><FaCloudSun className="me-1" size={10} /> Half Day</Badge>;
       case 'on_leave':
-        return <Badge bg="info"><FaSun className="me-1" size={10} /> Leave</Badge>;
+        return <Badge bg="info"><FaCloudSun className="me-1" size={10} /> Leave</Badge>;
       case 'absent':
         return <Badge bg="danger"><FaExclamationTriangle className="me-1" size={10} /> Absent</Badge>;
       case 'working':
@@ -1003,57 +816,29 @@ const Attendance = () => {
   const formatTime = (datetime) => {
     if (!datetime) return '--:--';
     try {
-      return new Date(datetime).toLocaleTimeString('en-US', {
+      const date = new Date(datetime);
+      if (isNaN(date.getTime())) return '--:--';
+      return date.toLocaleTimeString('en-US', {
         hour: '2-digit',
         minute: '2-digit',
         hour12: true
       });
     } catch (error) {
-      console.error('Error formatting time:', error);
       return '--:--';
     }
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-
-    // Parse the date string (YYYY-MM-DD) and create date in local timezone
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
   const formatShortDate = (dateString) => {
     if (!dateString) return 'N/A';
-
-    // Parse the date string (YYYY-MM-DD) and create date in local timezone
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day);
-
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric'
     });
   };
 
-  const getMonthName = (month) => {
-    return new Date(2000, month - 1, 1).toLocaleString('default', { month: 'long' });
-  };
-  
-  // Add this function after handleClockOutResponse
-  const handleManualClockOut = async () => {
-    setShowExitWarning(false);
-    await handleClockOut();
-  };
-
-  // Determine which button to show
   const renderClockButton = () => {
-    // If user has already clocked out today, show disabled Clock Out button
     if (hasClockedOutToday && !activeSession) {
       return (
         <Button
@@ -1061,7 +846,6 @@ const Attendance = () => {
           size="lg"
           className="w-100 py-2"
           disabled
-          style={{ opacity: 0.6, fontSize: '0.09rem' }}
         >
           <FaSignOutAlt className="me-2" />
           Clock Out (Completed for Today)
@@ -1069,7 +853,6 @@ const Attendance = () => {
       );
     }
 
-    // If there's an active session, show Clock Out button
     if (activeSession) {
       return (
         <Button
@@ -1094,7 +877,6 @@ const Attendance = () => {
       );
     }
 
-    // Default - show Clock In button
     return (
       <Button
         variant="success"
@@ -1125,11 +907,10 @@ const Attendance = () => {
         Attendance Management
       </h5>
 
-      {/* Compact Current Status Card */}
+      {/* Current Status Card */}
       <Card className="mb-4 border-0 shadow-sm">
         <Card.Body className="p-3">
           <Row className="align-items-center g-3">
-            {/* Location Info - Compact */}
             <Col md={3}>
               <div className="d-flex align-items-center">
                 {getLocationBadge()}
@@ -1142,7 +923,6 @@ const Attendance = () => {
               )}
             </Col>
 
-            {/* Time Display - Compact */}
             <Col md={3}>
               <div className="d-flex align-items-center justify-content-center">
                 <div className="text-center">
@@ -1152,7 +932,6 @@ const Attendance = () => {
               </div>
             </Col>
 
-            {/* Clock In/Out Times - Compact */}
             <Col md={3}>
               <Row className="g-2">
                 <Col xs={6} className="text-center">
@@ -1180,7 +959,6 @@ const Attendance = () => {
               </Row>
             </Col>
 
-            {/* Single Button - Changes based on state */}
             <Col md={3}>
               <div className="d-flex justify-content-end">
                 {renderClockButton()}
@@ -1188,8 +966,6 @@ const Attendance = () => {
             </Col>
           </Row>
 
-        
-          {/* Warning for outside office */}
           {geofenceInfo && !geofenceInfo.isInOffice && !activeSession && (
             <div className="mt-2 text-warning small text-center">
               <FaExclamationTriangle className="me-1" />
@@ -1197,7 +973,6 @@ const Attendance = () => {
             </div>
           )}
 
-          {/* Success/Error Messages */}
           {message.text && (
             <Alert
               variant={message.type}
@@ -1211,7 +986,7 @@ const Attendance = () => {
         </Card.Body>
       </Card>
 
-      {/* Attendance Reports - Full Width */}
+      {/* Attendance Reports */}
       <Row>
         <Col lg={12}>
           <Card className="border-0 shadow-sm">
@@ -1222,7 +997,6 @@ const Attendance = () => {
                   Attendance Report - Last 30 Days
                 </h6>
                 <div className="d-flex align-items-center gap-2">
-                  {/* Today's Status Badge - Detailed */}
                   {attendance?.clock_in ? (
                     attendance?.clock_out ? (
                       <Badge bg="success" className="px-3 py-2" style={{ fontSize: '0.85rem' }}>
@@ -1245,7 +1019,6 @@ const Attendance = () => {
                     </Badge>
                   )}
 
-                  {/* Date Badge */}
                   <Badge bg="info" className="px-3 py-2" style={{ fontSize: '0.85rem' }}>
                     <FaCalendarAlt className="me-1" size={12} />
                     {new Date().toLocaleDateString('en-US', {
@@ -1312,8 +1085,6 @@ const Attendance = () => {
                             <td className="small">
                               {record.isWeeklyOff ? (
                                 <span className="text-muted">-</span>
-                              ) : record.display_clock_out === 'Working' ? (
-                                <Badge bg="info" pill size="sm">Working</Badge>
                               ) : record.clock_out ? (
                                 formatTime(record.clock_out)
                               ) : record.clock_in ? (
@@ -1341,7 +1112,7 @@ const Attendance = () => {
                   </div>
                   <div className="mt-2 text-muted small">
                     <FaInfoCircle className="me-1" size={10} />
-                    Showing last 30 days from {formatShortDate(attendanceHistory[attendanceHistory.length - 1]?.date)} to {formatShortDate(attendanceHistory[0]?.date)}
+                    Showing last 30 days from {attendanceHistory.length > 0 ? formatShortDate(attendanceHistory[attendanceHistory.length - 1]?.date) : 'N/A'} to {attendanceHistory.length > 0 ? formatShortDate(attendanceHistory[0]?.date) : 'N/A'}
                   </div>
                 </Tab>
 
@@ -1386,7 +1157,7 @@ const Attendance = () => {
                   <div className="mt-2 text-center text-muted small">
                     <span className="me-3"><span style={{ color: 'rgb(40, 167, 69)' }}>●</span> Full Day (8+ hrs)</span>
                     <span className="me-3"><span style={{ color: 'rgb(255, 193, 7)' }}>●</span> Half Day (5-8 hrs)</span>
-                    <span><span style={{ color: 'rgb(220, 53, 69)' }}>●</span> Absent ({"<"}5 hrs)</span>
+                    <span><span style={{ color: 'rgb(220, 53, 69)' }}>●</span> Absent ({'<'}5 hrs)</span>
                   </div>
                 </Tab>
               </Tabs>

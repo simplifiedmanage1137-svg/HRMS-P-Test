@@ -1,7 +1,5 @@
 const LeaveYearlyService = require('../services/leaveYearlyService');
-const db = require('../config/database');
-
-
+const supabase = require('../config/supabase');
 
 // Get leave balance for employee
 exports.getLeaveBalance = async (req, res) => {
@@ -18,12 +16,14 @@ exports.getLeaveBalance = async (req, res) => {
         }
 
         // Get employee joining date
-        const [employee] = await db.query(
-            'SELECT joining_date FROM employees WHERE employee_id = ?',
-            [employee_id]
-        );
+        const { data: employees, error: empError } = await supabase
+            .from('employees')
+            .select('joining_date')
+            .eq('employee_id', employee_id);
 
-        if (employee.length === 0) {
+        if (empError) throw empError;
+
+        if (!employees || employees.length === 0) {
             return res.status(404).json({ 
                 success: false, 
                 message: 'Employee not found' 
@@ -31,9 +31,9 @@ exports.getLeaveBalance = async (req, res) => {
         }
 
         const today = new Date();
-        const joiningDate = new Date(employee[0].joining_date);
+        const joiningDate = new Date(employees[0].joining_date);
 
-        console.log('Joining Date:', employee[0].joining_date);
+        console.log('Joining Date:', employees[0].joining_date);
         console.log('Current Date:', today);
 
         // ===== CORRECT ELIGIBILITY CALCULATION =====
@@ -67,11 +67,11 @@ exports.getLeaveBalance = async (req, res) => {
             joiningDate: joiningDate.toISOString(),
             sixMonthsFromJoining: sixMonthsFromJoining.toISOString(),
             today: today.toISOString(),
-            totalMonthsFromJoining: totalMonths,  // Yeh sahi hoga
+            totalMonthsFromJoining: totalMonths,
             isEligible: isEligibleToApply
         });
 
-        // ===== ACCRUAL CALCULATION (Calendar year based - yeh sahi hai) =====
+        // ===== ACCRUAL CALCULATION (Calendar year based) =====
         const currentYear = today.getFullYear();
         const currentMonth = today.getMonth() + 1;
         const currentDay = today.getDate();
@@ -120,26 +120,33 @@ exports.getLeaveBalance = async (req, res) => {
         console.log('Total accrued for current year:', totalAccrued);
 
         // Get current year balance from database
-        let [balance] = await db.query(
-            'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-            [employee_id, currentYear]
-        );
+        let { data: balance, error: balanceError } = await supabase
+            .from('leave_balance')
+            .select('*')
+            .eq('employee_id', employee_id)
+            .eq('leave_year', currentYear);
+
+        if (balanceError) throw balanceError;
 
         // If no balance record exists for current year, create one
-        if (balance.length === 0) {
+        if (!balance || balance.length === 0) {
             console.log(`Creating new balance for ${employee_id} in ${currentYear}`);
             
-            await db.query(
-                `INSERT INTO leave_balance 
-                 (employee_id, leave_year, total_accrued, total_used, total_pending, current_balance) 
-                 VALUES (?, ?, ?, 0, 0, ?)`,
-                [employee_id, currentYear, totalAccrued, totalAccrued]
-            );
+            const { data: newBalance, error: insertError } = await supabase
+                .from('leave_balance')
+                .insert([{
+                    employee_id,
+                    leave_year: currentYear,
+                    total_accrued: totalAccrued,
+                    total_used: 0,
+                    total_pending: 0,
+                    current_balance: totalAccrued
+                }])
+                .select();
+
+            if (insertError) throw insertError;
             
-            [balance] = await db.query(
-                'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-                [employee_id, currentYear]
-            );
+            balance = newBalance;
         }
 
         const currentBalance = balance[0];
@@ -158,12 +165,16 @@ exports.getLeaveBalance = async (req, res) => {
         // Update database if needed
         if (dbTotalAccrued !== finalTotalAccrued) {
             console.log('Updating database with correct accrued:', finalTotalAccrued);
-            await db.query(
-                `UPDATE leave_balance 
-                 SET total_accrued = ?, current_balance = ? 
-                 WHERE employee_id = ? AND leave_year = ?`,
-                [finalTotalAccrued, calculatedAvailable, employee_id, currentYear]
-            );
+            const { error: updateError } = await supabase
+                .from('leave_balance')
+                .update({
+                    total_accrued: finalTotalAccrued,
+                    current_balance: calculatedAvailable
+                })
+                .eq('employee_id', employee_id)
+                .eq('leave_year', currentYear);
+
+            if (updateError) throw updateError;
         }
 
         const response = {
@@ -174,8 +185,8 @@ exports.getLeaveBalance = async (req, res) => {
             pending: totalPending.toFixed(1),
             available: calculatedAvailable.toFixed(1),
             monthly_accrual: 1.5,
-            joining_date: employee[0].joining_date,
-            months_completed: totalMonths,  // AB YEH SAHI HOGA - joining date se calculate
+            joining_date: employees[0].joining_date,
+            months_completed: totalMonths,
             completed_months_in_year: completedMonthsInCurrentYear,
             is_eligible: isEligibleToApply,
             eligible_from_date: eligibleFromDate,
@@ -239,19 +250,21 @@ exports.applyLeave = async (req, res) => {
         console.log('Number of days requested:', numberOfDays);
 
         // Check if employee exists
-        const [employee] = await db.query(
-            'SELECT * FROM employees WHERE employee_id = ?',
-            [employee_id]
-        );
+        const { data: employees, error: empError } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('employee_id', employee_id);
 
-        if (employee.length === 0) {
+        if (empError) throw empError;
+
+        if (!employees || employees.length === 0) {
             return res.status(404).json({ 
                 success: false, 
                 message: 'Employee not found' 
             });
         }
 
-        const emp = employee[0];
+        const emp = employees[0];
 
         // Check if employee has completed 6 months from joining date
         const joiningDate = new Date(emp.joining_date);
@@ -286,13 +299,16 @@ exports.applyLeave = async (req, res) => {
         const currentYear = today.getFullYear();
         
         // Get or create leave balance
-        let [balance] = await db.query(
-            'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-            [employee_id, currentYear]
-        );
+        let { data: balance, error: balanceError } = await supabase
+            .from('leave_balance')
+            .select('*')
+            .eq('employee_id', employee_id)
+            .eq('leave_year', currentYear);
+
+        if (balanceError) throw balanceError;
 
         // If no balance record exists, create one
-        if (balance.length === 0) {
+        if (!balance || balance.length === 0) {
             console.log('No balance record found, creating new one');
             
             // Calculate completed months in current year
@@ -315,17 +331,21 @@ exports.applyLeave = async (req, res) => {
 
             const initialAccrued = completedMonths * 1.5;
 
-            await db.query(
-                `INSERT INTO leave_balance 
-                 (employee_id, leave_year, total_accrued, total_used, total_pending, current_balance) 
-                 VALUES (?, ?, ?, 0, 0, ?)`,
-                [employee_id, currentYear, initialAccrued, initialAccrued]
-            );
+            const { data: newBalance, error: insertError } = await supabase
+                .from('leave_balance')
+                .insert([{
+                    employee_id,
+                    leave_year: currentYear,
+                    total_accrued: initialAccrued,
+                    total_used: 0,
+                    total_pending: 0,
+                    current_balance: initialAccrued
+                }])
+                .select();
+
+            if (insertError) throw insertError;
             
-            [balance] = await db.query(
-                'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-                [employee_id, currentYear]
-            );
+            balance = newBalance;
         }
 
         const currentBalance = balance[0];
@@ -354,109 +374,93 @@ exports.applyLeave = async (req, res) => {
         }
 
         // Check for overlapping leaves
-        const [overlapping] = await db.query(
-            `SELECT * FROM leaves WHERE employee_id = ? 
-             AND status != 'rejected'
-             AND ((start_date BETWEEN ? AND ?) OR (end_date BETWEEN ? AND ?))`,
-            [employee_id, start_date, end_date || start_date, start_date, end_date || start_date]
-        );
+        const { data: overlapping, error: overlapError } = await supabase
+            .from('leaves')
+            .select('*')
+            .eq('employee_id', employee_id)
+            .neq('status', 'rejected')
+            .or(`and(start_date.gte.${start_date},start_date.lte.${end_date || start_date}),and(end_date.gte.${start_date},end_date.lte.${end_date || start_date})`);
 
-        if (overlapping.length > 0) {
+        if (overlapError) throw overlapError;
+
+        if (overlapping && overlapping.length > 0) {
             return res.status(400).json({ 
                 success: false, 
                 message: 'You already have a leave application for this date range' 
             });
         }
 
-        // Start transaction to ensure data consistency
-        const connection = await db.getConnection();
-        await connection.beginTransaction();
+        // Insert leave application
+        const { data: leaveData, error: insertError } = await supabase
+            .from('leaves')
+            .insert([{
+                employee_id,
+                leave_type: leave_type || 'Annual',
+                leave_duration: leave_duration || 'Full Day',
+                start_date,
+                end_date: end_date || start_date,
+                half_day_type: half_day_type || null,
+                reason,
+                reporting_manager: reporting_manager || null,
+                status: 'pending',
+                days_count: numberOfDays,
+                applied_by: employee_id,
+                applied_date: new Date().toISOString()
+            }])
+            .select();
 
-        try {
-            // Insert leave application
-            const [result] = await connection.query(
-                `INSERT INTO leaves 
-                (employee_id, leave_type, leave_duration, start_date, end_date, half_day_type, 
-                 reason, reporting_manager, status, days_count, applied_by, applied_date) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NOW())`,
-                [
-                    employee_id, 
-                    leave_type || 'Annual', 
-                    leave_duration || 'Full Day', 
-                    start_date, 
-                    end_date || start_date, 
-                    half_day_type || null, 
-                    reason, 
-                    reporting_manager || null,
-                    numberOfDays,
-                    employee_id
-                ]
-            );
+        if (insertError) throw insertError;
 
-            console.log('Leave inserted with ID:', result.insertId);
+        console.log('Leave inserted with ID:', leaveData[0].id);
 
-            // Update balance only for non-Unpaid leaves
-            if (leave_type !== 'Unpaid') {
-                const newPending = totalPending + numberOfDays;
-                const newAvailable = available - numberOfDays;
+        // Update balance only for non-Unpaid leaves
+        let newBalanceData = currentBalance;
+        
+        if (leave_type !== 'Unpaid') {
+            const newPending = totalPending + numberOfDays;
+            const newAvailable = available - numberOfDays;
 
-                console.log('Updating balance (non-Unpaid leave):', {
-                    oldPending: totalPending,
-                    newPending,
-                    oldAvailable: available,
-                    newAvailable
-                });
-
-                await connection.query(
-                    `UPDATE leave_balance 
-                     SET total_pending = ?, 
-                         current_balance = ? 
-                     WHERE employee_id = ? AND leave_year = ?`,
-                    [newPending, newAvailable, employee_id, currentYear]
-                );
-            } else {
-                console.log('Unpaid leave - No balance update required');
-            }
-
-            // Commit transaction
-            await connection.commit();
-            console.log('Transaction committed successfully');
-
-            // Get updated balance (if needed)
-            let newBalance = currentBalance;
-            if (leave_type !== 'Unpaid') {
-                const [updatedBalance] = await db.query(
-                    'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-                    [employee_id, currentYear]
-                );
-                newBalance = updatedBalance[0];
-            }
-
-            console.log('Final status:', {
-                leave_type,
-                balance_updated: leave_type !== 'Unpaid'
+            console.log('Updating balance (non-Unpaid leave):', {
+                oldPending: totalPending,
+                newPending,
+                oldAvailable: available,
+                newAvailable
             });
 
-            res.status(201).json({
-                success: true,
-                message: 'Leave application submitted successfully',
-                leaveId: result.insertId,
-                balance: {
-                    total_accrued: (parseFloat(newBalance.total_accrued) || 0).toFixed(1),
-                    used: (parseFloat(newBalance.total_used) || 0).toFixed(1),
-                    pending: (parseFloat(newBalance.total_pending) || 0).toFixed(1),
-                    available: (parseFloat(newBalance.current_balance) || 0).toFixed(1),
-                    leave_year: currentYear
-                }
-            });
+            const { data: updatedBalance, error: updateError } = await supabase
+                .from('leave_balance')
+                .update({
+                    total_pending: newPending,
+                    current_balance: newAvailable
+                })
+                .eq('employee_id', employee_id)
+                .eq('leave_year', currentYear)
+                .select();
 
-        } catch (error) {
-            await connection.rollback();
-            console.error('Transaction failed, rolled back:', error);
-            throw error;
-        } finally {
-            connection.release();
+            if (updateError) throw updateError;
+            
+            newBalanceData = updatedBalance[0];
+        } else {
+            console.log('Unpaid leave - No balance update required');
         }
+
+        console.log('Final status:', {
+            leave_type,
+            balance_updated: leave_type !== 'Unpaid'
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Leave application submitted successfully',
+            leaveId: leaveData[0].id,
+            balance: {
+                total_accrued: (parseFloat(newBalanceData.total_accrued) || 0).toFixed(1),
+                used: (parseFloat(newBalanceData.total_used) || 0).toFixed(1),
+                pending: (parseFloat(newBalanceData.total_pending) || 0).toFixed(1),
+                available: (parseFloat(newBalanceData.current_balance) || 0).toFixed(1),
+                leave_year: currentYear
+            }
+        });
 
     } catch (error) {
         console.error('Error applying for leave:', error);
@@ -546,20 +550,19 @@ const validateHalfDay = async (employee_id, leaveDate, halfDayType, shiftTiming)
         const day = date.getDate();
 
         // Get attendance/working hours for this employee on this date
-        const [attendance] = await db.query(
-            `SELECT * FROM attendance 
-             WHERE employee_id = ? 
-             AND YEAR(attendance_date) = ? 
-             AND MONTH(attendance_date) = ? 
-             AND DAY(attendance_date) = ?`,
-            [employee_id, year, month, day]
-        );
+        const { data: attendance, error: attError } = await supabase
+            .from('attendance')
+            .select('*')
+            .eq('employee_id', employee_id)
+            .eq('attendance_date', leaveDate);
+
+        if (attError) throw attError;
 
         let hoursWorked = 0;
         let clockIn = null;
         let clockOut = null;
 
-        if (attendance.length > 0) {
+        if (attendance && attendance.length > 0) {
             // Calculate actual hours worked
             if (attendance[0].clock_in && attendance[0].clock_out) {
                 const clockInTime = new Date(attendance[0].clock_in);
@@ -618,32 +621,98 @@ const validateHalfDay = async (employee_id, leaveDate, halfDayType, shiftTiming)
     }
 };
 
+
 // Get leaves
 exports.getLeaves = async (req, res) => {
     try {
         const { employee_id, role } = req.query;
 
-        let query = `
-            SELECT l.*, e.first_name, e.last_name, e.department 
-            FROM leaves l 
-            JOIN employees e ON l.employee_id = e.employee_id
-        `;
-        let params = [];
+        console.log('📋 Fetching leaves with params:', { employee_id, role });
 
+        // Simple query first - just get leaves without join
+        let query = supabase
+            .from('leaves')
+            .select('*');
+
+        // Apply employee filter if needed
         if (role === 'employee' && employee_id) {
-            query += ' WHERE l.employee_id = ?';
-            params = [employee_id];
+            query = query.eq('employee_id', employee_id);
         }
 
-        query += ' ORDER BY l.applied_date DESC';
+        // Order by applied_date descending
+        query = query.order('applied_date', { ascending: false });
 
-        const [leaves] = await db.query(query, params);
-        res.json(leaves || []);
+        const { data: leaves, error } = await query;
+
+        if (error) {
+            console.error('❌ Error fetching leaves:', error);
+            throw error;
+        }
+
+        console.log(`✅ Found ${leaves?.length || 0} leaves`);
+
+        // If no leaves, return empty array
+        if (!leaves || leaves.length === 0) {
+            return res.json([]);
+        }
+
+        // Now get employee details for each leave
+        const formattedLeaves = [];
+
+        for (const leave of leaves) {
+            try {
+                // Fetch employee details for this leave
+                const { data: employee, error: empError } = await supabase
+                    .from('employees')
+                    .select('first_name, last_name, department, designation')
+                    .eq('employee_id', leave.employee_id)
+                    .single();
+
+                if (empError) {
+                    console.warn(`⚠️ Could not fetch employee details for ${leave.employee_id}:`, empError.message);
+                }
+
+                formattedLeaves.push({
+                    id: leave.id,
+                    employee_id: leave.employee_id,
+                    leave_type: leave.leave_type,
+                    leave_duration: leave.leave_duration,
+                    start_date: leave.start_date,
+                    end_date: leave.end_date,
+                    half_day_type: leave.half_day_type,
+                    reason: leave.reason,
+                    reporting_manager: leave.reporting_manager,
+                    status: leave.status,
+                    applied_date: leave.applied_date,
+                    days_count: leave.days_count,
+                    admin_comments: leave.admin_comments,
+                    created_at: leave.created_at,
+                    updated_at: leave.updated_at,
+                    first_name: employee?.first_name || '',
+                    last_name: employee?.last_name || '',
+                    department: employee?.department || '',
+                    designation: employee?.designation || ''
+                });
+            } catch (empErr) {
+                console.error(`❌ Error processing leave ${leave.id}:`, empErr);
+                formattedLeaves.push({
+                    ...leave,
+                    first_name: '',
+                    last_name: '',
+                    department: '',
+                    designation: ''
+                });
+            }
+        }
+
+        res.json(formattedLeaves);
 
     } catch (error) {
-        console.error('Error fetching leaves:', error);
-        res.status(500).json({
-            success: false,
+        console.error('❌ Error in getLeaves:', error);
+        console.error('Error details:', error);
+        
+        res.status(500).json({ 
+            success: false, 
             message: 'Error fetching leaves',
             error: error.message
         });
@@ -671,12 +740,14 @@ exports.updateLeaveStatus = async (req, res) => {
         }
 
         // Get leave details before update
-        const [leaveDetails] = await db.query(
-            'SELECT * FROM leaves WHERE id = ?',
-            [id]
-        );
+        const { data: leaveDetails, error: fetchError } = await supabase
+            .from('leaves')
+            .select('*')
+            .eq('id', id);
 
-        if (leaveDetails.length === 0) {
+        if (fetchError) throw fetchError;
+
+        if (!leaveDetails || leaveDetails.length === 0) {
             return res.status(404).json({ 
                 success: false, 
                 message: 'Leave request not found' 
@@ -705,12 +776,15 @@ exports.updateLeaveStatus = async (req, res) => {
         }
 
         // Get current balance
-        const [balance] = await db.query(
-            'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-            [leave.employee_id, currentYear]
-        );
+        const { data: balance, error: balanceError } = await supabase
+            .from('leave_balance')
+            .select('*')
+            .eq('employee_id', leave.employee_id)
+            .eq('leave_year', currentYear);
 
-        if (balance.length === 0) {
+        if (balanceError) throw balanceError;
+
+        if (!balance || balance.length === 0) {
             return res.status(404).json({ 
                 success: false, 
                 message: 'Leave balance not found' 
@@ -733,26 +807,36 @@ exports.updateLeaveStatus = async (req, res) => {
         });
 
         // Update leave status
-        await db.query(
-            'UPDATE leaves SET status = ?, admin_comments = ? WHERE id = ?',
-            [status, comments || null, id]
-        );
+        const { error: updateError } = await supabase
+            .from('leaves')
+            .update({
+                status,
+                admin_comments: comments || null
+            })
+            .eq('id', id);
+
+        if (updateError) throw updateError;
+
+        let newBalanceData = currentBalance;
 
         if (status === 'approved') {
             // APPROVED: Move from pending to used
-            // pending decreases by leaveDays
-            // used increases by leaveDays
-            // available stays the same (already deducted when applied)
             const newPending = totalPending - leaveDays;
             const newUsed = totalUsed + leaveDays;
             
-            await db.query(
-                `UPDATE leave_balance 
-                 SET total_pending = ?, 
-                     total_used = ? 
-                 WHERE employee_id = ? AND leave_year = ?`,
-                [newPending, newUsed, leave.employee_id, currentYear]
-            );
+            const { data: updatedBalance, error: balUpdateError } = await supabase
+                .from('leave_balance')
+                .update({
+                    total_pending: newPending,
+                    total_used: newUsed
+                })
+                .eq('employee_id', leave.employee_id)
+                .eq('leave_year', currentYear)
+                .select();
+
+            if (balUpdateError) throw balUpdateError;
+            
+            newBalanceData = updatedBalance[0];
             
             console.log('APPROVED - Balance updated:', {
                 oldPending: totalPending,
@@ -764,19 +848,22 @@ exports.updateLeaveStatus = async (req, res) => {
 
         } else if (status === 'rejected') {
             // REJECTED: Move from pending back to available
-            // pending decreases by leaveDays
-            // available increases by leaveDays
-            // used stays the same
             const newPending = totalPending - leaveDays;
             const newAvailable = available + leaveDays;
             
-            await db.query(
-                `UPDATE leave_balance 
-                 SET total_pending = ?, 
-                     current_balance = ? 
-                 WHERE employee_id = ? AND leave_year = ?`,
-                [newPending, newAvailable, leave.employee_id, currentYear]
-            );
+            const { data: updatedBalance, error: balUpdateError } = await supabase
+                .from('leave_balance')
+                .update({
+                    total_pending: newPending,
+                    current_balance: newAvailable
+                })
+                .eq('employee_id', leave.employee_id)
+                .eq('leave_year', currentYear)
+                .select();
+
+            if (balUpdateError) throw balUpdateError;
+            
+            newBalanceData = updatedBalance[0];
             
             console.log('REJECTED - Balance updated:', {
                 oldPending: totalPending,
@@ -787,30 +874,25 @@ exports.updateLeaveStatus = async (req, res) => {
             });
         }
 
-        // Get updated balance
-        const [updatedBalance] = await db.query(
-            'SELECT * FROM leave_balance WHERE employee_id = ? AND leave_year = ?',
-            [leave.employee_id, currentYear]
-        );
-
-        const newBalance = updatedBalance[0];
-
         // Get updated leave stats for admin dashboard
-        const [pendingCount] = await db.query(
-            'SELECT COUNT(*) as count FROM leaves WHERE status = "pending"'
-        );
-        
-        const [approvedCount] = await db.query(
-            'SELECT COUNT(*) as count FROM leaves WHERE status = "approved"'
-        );
-        
-        const [rejectedCount] = await db.query(
-            'SELECT COUNT(*) as count FROM leaves WHERE status = "rejected"'
-        );
-        
-        const [totalCount] = await db.query(
-            'SELECT COUNT(*) as count FROM leaves'
-        );
+        const { count: pendingCount, error: pendingError } = await supabase
+            .from('leaves')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'pending');
+
+        const { count: approvedCount, error: approvedError } = await supabase
+            .from('leaves')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'approved');
+
+        const { count: rejectedCount, error: rejectedError } = await supabase
+            .from('leaves')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'rejected');
+
+        const { count: totalCount, error: totalError } = await supabase
+            .from('leaves')
+            .select('*', { count: 'exact', head: true });
 
         // Create notification for employee
         try {
@@ -818,10 +900,16 @@ exports.updateLeaveStatus = async (req, res) => {
                 ? `Your leave application for ${new Date(leave.start_date).toLocaleDateString()} has been approved.`
                 : `Your leave application for ${new Date(leave.start_date).toLocaleDateString()} has been rejected. ${comments ? 'Reason: ' + comments : ''}`;
 
-            await db.query(
-                'INSERT INTO notifications (employee_id, message, type, created_at) VALUES (?, ?, ?, NOW())',
-                [leave.employee_id, notificationMessage, 'leave_' + status]
-            );
+            const { error: notifError } = await supabase
+                .from('notifications')
+                .insert([{
+                    employee_id: leave.employee_id,
+                    message: notificationMessage,
+                    type: 'leave_' + status,
+                    created_at: new Date().toISOString()
+                }]);
+
+            if (notifError) throw notifError;
             console.log('Notification created for employee');
         } catch (notifError) {
             console.error('Error creating notification:', notifError);
@@ -831,16 +919,16 @@ exports.updateLeaveStatus = async (req, res) => {
             success: true,
             message: `Leave ${status} successfully`,
             balance: {
-                total_accrued: (parseFloat(newBalance.total_accrued) || 0).toFixed(1),
-                used: (parseFloat(newBalance.total_used) || 0).toFixed(1),
-                pending: (parseFloat(newBalance.total_pending) || 0).toFixed(1),
-                available: (parseFloat(newBalance.current_balance) || 0).toFixed(1)
+                total_accrued: (parseFloat(newBalanceData.total_accrued) || 0).toFixed(1),
+                used: (parseFloat(newBalanceData.total_used) || 0).toFixed(1),
+                pending: (parseFloat(newBalanceData.total_pending) || 0).toFixed(1),
+                available: (parseFloat(newBalanceData.current_balance) || 0).toFixed(1)
             },
             stats: {
-                total: totalCount[0].count,
-                pending: pendingCount[0].count,
-                approved: approvedCount[0].count,
-                rejected: rejectedCount[0].count
+                total: totalCount || 0,
+                pending: pendingCount || 0,
+                approved: approvedCount || 0,
+                rejected: rejectedCount || 0
             },
             employee_id: leave.employee_id // Send employee_id so frontend knows who to refresh
         });
@@ -858,9 +946,14 @@ exports.updateLeaveStatus = async (req, res) => {
 // Get leave types
 exports.getLeaveTypes = async (req, res) => {
     try {
-        const [types] = await db.query('SELECT * FROM leave_types WHERE is_active = true');
+        const { data: types, error } = await supabase
+            .from('leave_types')
+            .select('*')
+            .eq('is_active', true);
 
-        if (types.length === 0) {
+        if (error) throw error;
+
+        if (!types || types.length === 0) {
             return res.json([
                 { id: 1, name: 'Annual', description: 'Annual vacation leave' },
                 { id: 2, name: 'Sick', description: 'Medical leave' },

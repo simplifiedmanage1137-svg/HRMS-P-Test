@@ -18,8 +18,8 @@ import {
   FaArrowLeft,
   FaCheckCircle
 } from 'react-icons/fa';
-import axios from '../../config/axios'; // Import the configured axios instance
-import API_ENDPOINTS from '../../config/api'; // Import API endpoints
+import axios from '../../config/axios';
+import API_ENDPOINTS from '../../config/api';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 
@@ -69,7 +69,7 @@ const AddEmployee = () => {
   const [acceptPolicy, setAcceptPolicy] = useState(false);
   const [debugInfo, setDebugInfo] = useState(null);
   const [employeeId, setEmployeeId] = useState('');
-  
+
   // Track completed tabs
   const [completedTabs, setCompletedTabs] = useState({
     personal: false,
@@ -201,7 +201,7 @@ const AddEmployee = () => {
     if (!tempPersonalData.dob) return "Date of birth is required";
     if (!tempPersonalData.address) return "Address is required";
     if (!tempPersonalData.emergency_contact) return "Emergency contact is required";
-    
+
     if (tempPersonalData.pan_number.length !== 10) {
       return "PAN number must be 10 characters";
     }
@@ -211,12 +211,12 @@ const AddEmployee = () => {
     if (!/^\d{10}$/.test(tempPersonalData.emergency_contact)) {
       return "Emergency contact must be 10 digits";
     }
-    
+
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(tempPersonalData.email)) {
       return "Please enter a valid email address";
     }
-    
+
     return null;
   };
 
@@ -246,7 +246,7 @@ const AddEmployee = () => {
   const saveCurrentTab = () => {
     let validationError = null;
 
-    switch(activeTab) {
+    switch (activeTab) {
       case 'personal':
         validationError = validatePersonalTab();
         if (!validationError) {
@@ -327,64 +327,83 @@ const AddEmployee = () => {
 
   // Check if all tabs are completed
   const isAllTabsCompleted = () => {
-    return completedTabs.personal && completedTabs.bank && 
-           completedTabs.salary && completedTabs.policy;
+    return completedTabs.personal && completedTabs.bank &&
+      completedTabs.salary && completedTabs.policy;
   };
 
-  // Generate employee ID on final submit
-  const generateEmployeeId = async () => {
-    if (!tempPersonalData.joining_date) return null;
-    
-    const date = new Date(tempPersonalData.joining_date);
-    const year = date.getFullYear().toString().slice(-2);
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    
-    try {
-      // Get all employees to check existing IDs
-      const response = await axios.get(API_ENDPOINTS.EMPLOYEES);
-      const employees = response.data;
-      
-      console.log('Total employees:', employees.length);
-      
-      // Filter employees with the same year and month prefix
-      const prefix = `B2B${year}${month}`;
-      const sameMonthEmployees = employees.filter(emp => {
-        return emp.employee_id && emp.employee_id.startsWith(prefix);
-      });
-      
-      console.log(`Found ${sameMonthEmployees.length} employees with prefix ${prefix}`);
-      
-      // Find the highest sequence number
-      let maxSeq = 0;
-      sameMonthEmployees.forEach(emp => {
-        const id = emp.employee_id;
-        if (id && id.length === 10) { // B2BYYMMSS format (B2B + YY + MM + SS = 10 chars)
-          const seqStr = id.slice(-2); // Last 2 characters
-          const seq = parseInt(seqStr, 10);
-          if (!isNaN(seq) && seq > maxSeq) {
-            maxSeq = seq;
-          }
-        }
-      });
-      
-      console.log('Current max sequence:', maxSeq);
-      
-      // Generate new sequence
-      const newSeq = (maxSeq + 1).toString().padStart(2, '0');
-      const newEmployeeId = `${prefix}${newSeq}`;
-      
-      console.log('Generated new employee ID:', newEmployeeId);
-      return newEmployeeId;
-      
-    } catch (error) {
-      console.error('Error generating employee ID:', error);
-      
-      // Fallback: Use timestamp to ensure uniqueness
-      const timestamp = Date.now().toString().slice(-4);
-      const randomSeq = Math.floor(1 + Math.random() * 99).toString().padStart(2, '0');
-      return `B2B${year}${month}${randomSeq}`;
+// Generate employee ID based on joining date - 2-digit sequence
+const generateEmployeeId = async () => {
+  if (!tempPersonalData.joining_date) return null;
+
+  const date = new Date(tempPersonalData.joining_date);
+  const year = date.getFullYear().toString().slice(-2);
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+
+  try {
+    console.log('🔍 Generating employee ID for joining date:', tempPersonalData.joining_date);
+
+    // Get all employees to check existing IDs
+    const response = await axios.get(API_ENDPOINTS.EMPLOYEES);
+    let employees = [];
+
+    if (Array.isArray(response.data)) {
+      employees = response.data;
+    } else if (response.data && response.data.data && Array.isArray(response.data.data)) {
+      employees = response.data.data;
+    } else {
+      employees = [];
     }
-  };
+
+    console.log('📊 Total employees:', employees.length);
+
+    // Filter employees with the same year and month prefix
+    const prefix = `B2B${year}${month}`;
+    const sameMonthEmployees = employees.filter(emp => {
+      return emp.employee_id && emp.employee_id.startsWith(prefix);
+    });
+
+    console.log(`📊 Found ${sameMonthEmployees.length} employees with prefix ${prefix}`);
+
+    // Find the highest sequence number (2 digits)
+    let maxSeq = 0;
+    sameMonthEmployees.forEach(emp => {
+      const id = emp.employee_id;
+      if (id && id.length >= 9) { // B2BYYMMSS = 9 chars
+        const seqStr = id.slice(-2); // Last 2 characters
+        const seq = parseInt(seqStr, 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      }
+    });
+
+    console.log('📊 Current max sequence:', maxSeq);
+
+    // Generate new sequence (start from 1 if no employees)
+    const newSeq = (maxSeq + 1).toString().padStart(2, '0');
+
+    // Ensure sequence doesn't exceed 99
+    if (maxSeq >= 99) {
+      throw new Error('Maximum employees for this month reached (99)');
+    }
+
+    const newEmployeeId = `${prefix}${newSeq}`;
+
+    console.log('✅ Generated new employee ID:', newEmployeeId);
+    return newEmployeeId;
+
+  } catch (error) {
+    console.error('❌ Error generating employee ID:', error);
+
+    // Fallback: Use timestamp to ensure uniqueness
+    const timestamp = Date.now().toString().slice(-4);
+    const fallbackSeq = timestamp.slice(-2);
+    const fallbackId = `B2B${year}${month}${fallbackSeq}`;
+
+    console.log('⚠️ Using fallback ID:', fallbackId);
+    return fallbackId;
+  }
+};
 
   // Upload documents function
   const uploadDocuments = async (empId) => {
@@ -411,24 +430,21 @@ const AddEmployee = () => {
 
       try {
         setUploadProgress(Math.round(((i + 1) / validUploads.length) * 100));
-        
-        // Use the API endpoint from config
+
         const url = API_ENDPOINTS.EMPLOYEE_DOCUMENTS(empId);
         console.log(`📤 Uploading to: ${url}`);
         console.log(`📄 Document type: ${upload.type}, File:`, upload.file.name);
-        
+
         const response = await axios.post(url, formData, {
           headers: {
             'Content-Type': 'multipart/form-data'
           }
         });
-        
+
         console.log('✅ Upload response:', response.data);
         successCount++;
       } catch (error) {
         console.error(`❌ Error uploading ${upload.type}:`, error);
-        console.error('Error response:', error.response?.data);
-        console.error('Error status:', error.response?.status);
         failCount++;
       }
     }
@@ -458,10 +474,10 @@ const AddEmployee = () => {
     }
   };
 
-  // Final submit handler
+  // Final submit handler - UPDATED WITH BETTER ERROR HANDLING
   const handleFinalSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Save current tab first
     const saved = saveCurrentTab();
     if (!saved) return;
@@ -484,61 +500,66 @@ const AddEmployee = () => {
         throw new Error("Cannot connect to server. Please check if backend is running.");
       }
 
-      // Generate employee ID with retry logic
+      // Generate employee ID
       let empId = null;
       let retryCount = 0;
-      const maxRetries = 3;
-      
+      const maxRetries = 5;
+
       while (!empId && retryCount < maxRetries) {
-        empId = await generateEmployeeId();
-        if (!empId) {
+        try {
+          empId = await generateEmployeeId();
+          if (!empId) {
+            throw new Error('Failed to generate employee ID');
+          }
+          retryCount++;
+        } catch (err) {
           retryCount++;
           await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
-      
+
       if (!empId) {
         throw new Error("Could not generate unique employee ID after multiple attempts");
       }
-      
+
       setEmployeeId(empId);
-      console.log('Final Employee ID:', empId);
+      console.log('✅ Final Employee ID:', empId);
 
       // Prepare data for API
       const employeeData = {
-        first_name: tempPersonalData.first_name,
-        middle_name: tempPersonalData.middle_name || null,
-        last_name: tempPersonalData.last_name,
+        first_name: tempPersonalData.first_name?.trim(),
+        middle_name: tempPersonalData.middle_name?.trim() || null,
+        last_name: tempPersonalData.last_name?.trim(),
         employee_id: empId,
-        email: tempPersonalData.email,
+        email: tempPersonalData.email?.trim().toLowerCase(),
         joining_date: tempPersonalData.joining_date,
-        designation: tempPersonalData.designation,
+        designation: tempPersonalData.designation?.trim(),
         department: tempPersonalData.department,
-        reporting_manager: tempPersonalData.reporting_manager || null,
+        reporting_manager: tempPersonalData.reporting_manager?.trim() || null,
         employment_type: tempPersonalData.employment_type || 'Full Time',
-        shift_timing: tempPersonalData.shift_timing || '9:00 AM - 6:00 PM',
+        shift_timing: tempPersonalData.shift_timing?.trim() || '9:00 AM - 6:00 PM',
         in_hand_salary: parseFloat(tempSalaryData.in_hand_salary) || 0,
         gross_salary: parseFloat(tempSalaryData.gross_salary) || 0,
-        bank_account_name: tempBankData.bank_account_name,
-        account_number: tempBankData.account_number,
-        ifsc_code: tempBankData.ifsc_code,
-        branch_name: tempBankData.branch_name,
-        pan_number: tempPersonalData.pan_number,
-        aadhar_number: tempPersonalData.aadhar_number,
-        dob: tempPersonalData.dob,
-        address: tempPersonalData.address,
+        bank_account_name: tempBankData.bank_account_name?.trim() || null,
+        account_number: tempBankData.account_number?.trim() || null,
+        ifsc_code: tempBankData.ifsc_code?.trim().toUpperCase() || null,
+        branch_name: tempBankData.branch_name?.trim() || null,
+        pan_number: tempPersonalData.pan_number?.trim().toUpperCase() || null,
+        aadhar_number: tempPersonalData.aadhar_number?.trim() || null,
+        dob: tempPersonalData.dob || null,
+        address: tempPersonalData.address?.trim() || null,
         blood_group: tempPersonalData.blood_group || null,
-        emergency_contact: tempPersonalData.emergency_contact,
+        emergency_contact: tempPersonalData.emergency_contact?.trim() || null,
         contract_policy: tempPolicyData.contract_policy || null
       };
 
-      console.log('Submitting employee data:', JSON.stringify(employeeData, null, 2));
+      console.log('📦 Submitting employee data:', JSON.stringify(employeeData, null, 2));
       setDebugInfo(employeeData);
 
-      // Create employee using API endpoint from config
+      // Create employee
       const response = await axios.post(API_ENDPOINTS.EMPLOYEES, employeeData);
 
-      console.log('Employee created:', response.data);
+      console.log('✅ Employee created:', response.data);
 
       setSuccess('Employee added successfully!');
       showNotification('Employee added successfully!', 'success');
@@ -554,31 +575,39 @@ const AddEmployee = () => {
       }, 2000);
 
     } catch (error) {
-      console.error('Error adding employee:', error);
+      console.error('❌ Error adding employee:', error);
       console.error('Error response:', error.response?.data);
       console.error('Error status:', error.response?.status);
-      
+
       let errorMsg = 'Failed to add employee';
-      
+
       if (error.response) {
-        // Handle duplicate ID error specifically
-        if (error.response.status === 400 && error.response.data?.error?.includes('Duplicate')) {
-          errorMsg = 'Employee ID already exists. Please try again - a new ID will be generated.';
-          // Clear the cached ID so a new one will be generated
-          setEmployeeId('');
+        const errorData = error.response.data;
+
+        if (error.response.status === 400) {
+          if (errorData.field) {
+            errorMsg = `${errorData.field.replace(/_/g, ' ')} '${errorData.value}' already exists. Please use a different value.`;
+          } else if (errorData.message) {
+            errorMsg = errorData.message;
+          } else {
+            errorMsg = 'Please check all fields and try again.';
+          }
+        } else if (error.response.status === 401 || error.response.status === 403) {
+          errorMsg = 'You are not authorized to add employees. Please login again.';
+        } else if (error.response.status === 500) {
+          errorMsg = 'Server error. Please try again later.';
         } else {
-          errorMsg = error.response.data?.message || 
-                     error.response.data?.error || 
-                     `Server error: ${error.response.status}`;
+          errorMsg = errorData?.message || `Server error: ${error.response.status}`;
         }
       } else if (error.request) {
         errorMsg = 'No response from server. Please check if backend is running.';
       } else {
         errorMsg = error.message;
       }
-      
+
       setError(errorMsg);
       showNotification(errorMsg, 'danger');
+      setEmployeeId('');
     } finally {
       setSaving(false);
     }
@@ -1121,10 +1150,10 @@ const AddEmployee = () => {
                       <h6 className="small fw-semibold mb-0">Employment Contract Policy</h6>
                     </div>
 
-                    <div 
+                    <div
                       className="bg-white p-3 rounded border mb-3"
-                      style={{ 
-                        maxHeight: '300px', 
+                      style={{
+                        maxHeight: '300px',
                         overflowY: 'auto',
                         fontSize: '0.85rem',
                         whiteSpace: 'pre-line',
@@ -1246,7 +1275,7 @@ const AddEmployee = () => {
                   </Button>
                 )}
               </div>
-              
+
               <div className="d-flex gap-2">
                 {activeTab !== 'documents' ? (
                   <Button

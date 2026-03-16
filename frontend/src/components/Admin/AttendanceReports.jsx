@@ -17,7 +17,8 @@ import {
   FaUserTie,
   FaVenusMars,
   FaUniversity,
-  FaIdCard
+  FaIdCard,
+  FaMoon
 } from 'react-icons/fa';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
@@ -86,6 +87,7 @@ const AttendanceReports = () => {
     fetchAllEmployees();
   }, []);
 
+
   useEffect(() => {
     const days = new Date(selectedYear, selectedMonth, 0).getDate();
     setDaysInMonth(days);
@@ -118,12 +120,14 @@ const AttendanceReports = () => {
     }
   };
 
-  // ============== FETCH DAILY ATTENDANCE ==============
+
   const fetchDailyAttendance = async () => {
     try {
       setLoading(true);
       setMessage('');
 
+      // 👇 FIX: Use the selected date as is (it's already in YYYY-MM-DD format)
+      // Don't convert to Date object
       const url = `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${selectedDate}&end=${selectedDate}`;
       const response = await axios.get(url);
 
@@ -166,17 +170,29 @@ const AttendanceReports = () => {
     }
   };
 
-  // ============== FETCH MONTHLY ATTENDANCE ==============
+  // AttendanceReports.jsx - Fixed fetchMonthlyAttendance
+
   const fetchMonthlyAttendance = async () => {
     try {
       setLoading(true);
       setMessage('');
 
+      // 👇 FIX: Create dates in local timezone, not UTC
       const startDate = new Date(selectedYear, selectedMonth - 1, 1);
       const endDate = new Date(selectedYear, selectedMonth, 0);
 
-      const startDateStr = startDate.toISOString().split('T')[0];
-      const endDateStr = endDate.toISOString().split('T')[0];
+      // Format dates as YYYY-MM-DD in local timezone
+      const formatLocalDate = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+
+      const startDateStr = formatLocalDate(startDate);
+      const endDateStr = formatLocalDate(endDate);
+
+      console.log('📅 Fetching monthly attendance from', startDateStr, 'to', endDateStr);
 
       let url = `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${startDateStr}&end=${endDateStr}`;
       if (department !== 'all') {
@@ -228,18 +244,22 @@ const AttendanceReports = () => {
     }
   };
 
-  // ============== PROCESS MONTHLY ATTENDANCE WITH HOLIDAYS ==============
+  // AttendanceReports.jsx - Fixed processMonthlyAttendance
+
   const processMonthlyAttendance = (attendanceData, employees, leaveData, holidays, startDate, endDate) => {
     const daysInMonth = endDate.getDate();
     const processedData = [];
 
-    // Create attendance map
+    // Create attendance map with date strings
     const attendanceMap = {};
     attendanceData.forEach(record => {
-      const dateStr = record.attendance_date ? record.attendance_date.split('T')[0] : '';
-      if (dateStr && record.employee_id) {
-        const key = `${record.employee_id}-${dateStr}`;
-        attendanceMap[key] = record;
+      if (record.attendance_date) {
+        // Extract date part only (YYYY-MM-DD)
+        const dateStr = record.attendance_date.split('T')[0];
+        if (dateStr && record.employee_id) {
+          const key = `${record.employee_id}-${dateStr}`;
+          attendanceMap[key] = record;
+        }
       }
     });
 
@@ -250,7 +270,10 @@ const AttendanceReports = () => {
       const leaveEnd = new Date(leave.end_date || leave.start_date);
 
       for (let d = new Date(leaveStart); d <= leaveEnd; d.setDate(d.getDate() + 1)) {
-        const dateStr = d.toISOString().split('T')[0];
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
         const key = `${leave.employee_id}-${dateStr}`;
         leaveMap[key] = {
           type: leave.leave_type,
@@ -275,15 +298,37 @@ const AttendanceReports = () => {
       filteredEmployees = employees.filter(emp => emp.department === department);
     }
 
+    // Get today's date for comparison
+    const today = new Date();
+    const todayYear = today.getFullYear();
+    const todayMonth = today.getMonth() + 1;
+    const todayDay = today.getDate();
+
     filteredEmployees.forEach(employee => {
       for (let day = 1; day <= daysInMonth; day++) {
+        // Create date in local timezone
         const currentDate = new Date(selectedYear, selectedMonth - 1, day);
-        const dateStr = currentDate.toISOString().split('T')[0];
+
+        // Format date as YYYY-MM-DD in local timezone
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const dayStr = String(currentDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${dayStr}`;
+
+        const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 6 = Saturday
 
         const attendanceKey = `${employee.employee_id}-${dateStr}`;
         const dayAttendance = attendanceMap[attendanceKey];
         const dayLeave = leaveMap[attendanceKey];
         const dayHoliday = holidayMap[dateStr];
+
+        // Check if it's a weekend (Saturday or Sunday)
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+        // Check if this date is today
+        const isToday = year === todayYear &&
+          currentDate.getMonth() + 1 === todayMonth &&
+          day === todayDay;
 
         let status = 'absent';
         let statusBadge = 'danger';
@@ -295,8 +340,14 @@ const AttendanceReports = () => {
         let tooltip = 'Absent';
         let leaveType = null;
 
-        // PRIORITY: Holiday > Leave > Attendance
-        if (dayHoliday) {
+        // PRIORITY: Weekend > Holiday > Leave > Attendance
+        if (isWeekend) {
+          status = 'weekend';
+          statusBadge = 'secondary';
+          statusIcon = 'W';
+          tooltip = 'Weekend (Saturday/Sunday)';
+        }
+        else if (dayHoliday) {
           status = 'holiday';
           statusBadge = 'warning';
           statusIcon = '🎉';
@@ -314,8 +365,6 @@ const AttendanceReports = () => {
           clockOut = dayAttendance.clock_out;
           totalHours = parseFloat(dayAttendance.total_hours) || 0;
           lateMinutes = dayAttendance.late_minutes || 0;
-
-          const isToday = dateStr === new Date().toISOString().split('T')[0];
 
           if (isToday && clockIn && !clockOut) {
             status = 'working';
@@ -368,9 +417,12 @@ const AttendanceReports = () => {
           department: employee.department,
           date: dateStr,
           day,
+          dayOfWeek,
+          isWeekend,
+          isToday,
           clock_in: clockIn,
           clock_out: clockOut,
-          total_hours: status === 'holiday' ? '0' : totalHours.toFixed(1),
+          total_hours: status === 'holiday' || status === 'weekend' ? '0' : totalHours.toFixed(1),
           status,
           statusBadge,
           statusIcon,
@@ -401,6 +453,7 @@ const AttendanceReports = () => {
           on_leave: 0,
           working: 0,
           holiday: 0,
+          weekend: 0,
           total_hours: 0,
           late_count: 0,
           total_late_minutes: 0,
@@ -419,6 +472,7 @@ const AttendanceReports = () => {
       }
       else if (record.status === 'working') perEmployee[record.employee_id].working++;
       else if (record.status === 'holiday') perEmployee[record.employee_id].holiday++;
+      else if (record.status === 'weekend') perEmployee[record.employee_id].weekend++;
 
       // Count late logins
       if (record.is_late) {
@@ -474,14 +528,15 @@ const AttendanceReports = () => {
     }
   };
 
+
   const goToCurrentMonth = () => {
-    setSelectedMonth(currentMonth);
-    setSelectedYear(currentYear);
+    const today = new Date();
+    setSelectedMonth(today.getMonth() + 1);
+    setSelectedYear(today.getFullYear());
   };
 
   // ============== GET GENDER DISPLAY ==============
   const getGender = (employee) => {
-    // This would come from employee data - defaulting to 'Not Specified' if not available
     return employee.gender || 'Not Specified';
   };
 
@@ -544,7 +599,8 @@ const AttendanceReports = () => {
             record.status === 'half_day' ? 'Half Day' :
               record.status === 'working' ? 'Working' :
                 record.status === 'on_leave' ? 'On Leave' :
-                  record.status === 'holiday' ? 'Holiday' : 'Absent'
+                  record.status === 'holiday' ? 'Holiday' :
+                    record.status === 'weekend' ? 'Weekend Off' : 'Absent'
         }));
 
         const ws = XLSX.utils.json_to_sheet(exportData);
@@ -600,6 +656,7 @@ const AttendanceReports = () => {
             half_day: 0,
             absent: 0,
             on_leave: 0,
+            weekend: 0,
             late_count: 0
           };
 
@@ -630,11 +687,20 @@ const AttendanceReports = () => {
                 status = 'L';
               } else if (dayRecord.status === 'holiday') {
                 status = 'H';
+              } else if (dayRecord.status === 'weekend') {
+                status = 'W-OFF';
               } else {
                 status = 'A';
               }
             } else {
-              status = 'A';
+              // Check if this day is weekend
+              const currentDate = new Date(selectedYear, selectedMonth - 1, day);
+              const dayOfWeek = currentDate.getDay();
+              if (dayOfWeek === 0 || dayOfWeek === 6) {
+                status = 'W-OFF';
+              } else {
+                status = 'A';
+              }
             }
 
             // Format: "Mar 1", "Mar 2", etc.
@@ -647,6 +713,7 @@ const AttendanceReports = () => {
           row['Present Days'] = empStats.present || 0;
           row['Half Days'] = empStats.half_day || 0;
           row['PL Leave'] = empStats.on_leave || 0;
+          row['Weekend Off'] = empStats.weekend || 0;
           row['Absent'] = empStats.absent || 0;
           row['Late Coming'] = empStats.late_count || 0;
           row['Amount'] = salary.actualSalary;
@@ -686,6 +753,7 @@ const AttendanceReports = () => {
           { wch: 12 }, // Present Days
           { wch: 10 }, // Half Days
           { wch: 10 }, // PL Leave
+          { wch: 12 }, // Weekend Off
           { wch: 10 }, // Absent
           { wch: 12 }, // Late Coming
           { wch: 12 }, // Amount
@@ -741,12 +809,12 @@ const AttendanceReports = () => {
     const hours = Math.floor(totalSeconds / 3600);
     const mins = Math.floor((totalSeconds % 3600) / 60);
     const secs = totalSeconds % 60;
-    
+
     const parts = [];
     if (hours > 0) parts.push(`${hours}h`);
     if (mins > 0) parts.push(`${mins}m`);
     if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
-    
+
     return parts.join(' ');
   };
 
@@ -764,13 +832,20 @@ const AttendanceReports = () => {
     if (record.status === 'half_day') return <Badge bg="warning" className="px-2 py-1">Half Day</Badge>;
     if (record.status === 'on_leave') return <Badge bg="purple" className="px-2 py-1" style={{ backgroundColor: '#6f42c1' }}>On Leave</Badge>;
     if (record.status === 'holiday') return <Badge bg="warning" className="px-2 py-1" style={{ backgroundColor: '#ffc107' }}>Holiday</Badge>;
+    if (record.status === 'weekend') return <Badge bg="secondary" className="px-2 py-1"><FaMoon className="me-1" size={10} /> W-OFF</Badge>;
     return <Badge bg="secondary" className="px-2 py-1">Absent</Badge>;
   };
 
+
   const isCurrentDate = (day) => {
-    return selectedMonth === currentMonth &&
-      selectedYear === currentYear &&
-      day === currentDay;
+    const today = new Date();
+    const todayYear = today.getFullYear();
+    const todayMonth = today.getMonth() + 1;
+    const todayDay = today.getDate();
+
+    return selectedMonth === todayMonth &&
+      selectedYear === todayYear &&
+      day === todayDay;
   };
 
   // ============== RENDER ==============
@@ -888,13 +963,14 @@ const AttendanceReports = () => {
         </div>
       )}
 
-      {/* Legend */}
+      {/* Legend - Updated with Weekend */}
       <div className="d-flex flex-wrap gap-3 mb-3 small justify-content-center">
         <span><Badge bg="success" pill>P</Badge> Present</span>
         <span><Badge bg="warning" pill>HD</Badge> Half Day</span>
         <span><Badge bg="info" pill>W</Badge> Working</span>
         <span><Badge bg="purple" pill style={{ backgroundColor: '#6f42c1' }}>L</Badge> On Leave</span>
         <span><Badge bg="warning" pill style={{ backgroundColor: '#ffc107' }}>H</Badge> Holiday</span>
+        <span><Badge bg="secondary" pill><FaMoon className="me-1" size={10} /> W-OFF</Badge> Weekend Off</span>
         <span><Badge bg="secondary" pill>A</Badge> Absent</span>
         <span><Badge bg="warning" pill style={{ backgroundColor: '#fd7e14' }}>⚠️</Badge> Late Login</span>
         <span className="text-muted">|</span>
@@ -1067,9 +1143,12 @@ const AttendanceReports = () => {
                         const day = i + 1;
                         const isCurrent = isCurrentDate(day);
                         const monthData = months.find(m => m.value === selectedMonth);
+                        const currentDate = new Date(selectedYear, selectedMonth - 1, day);
+                        const dayOfWeek = currentDate.getDay();
+                        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
                         return (
-                          <th key={i} className={`fw-normal small text-center ${isCurrent ? 'bg-primary text-white' : 'bg-light'}`}
+                          <th key={i} className={`fw-normal small text-center ${isCurrent ? 'bg-primary text-white' : isWeekend ? 'bg-secondary text-white' : 'bg-light'}`}
                             style={{ minWidth: '32px', top: 0, zIndex: 10 }}>
                             {day}
                             <div className="small fw-normal">{monthData?.short}</div>
@@ -1081,6 +1160,7 @@ const AttendanceReports = () => {
                       <th className="text-center fw-normal small bg-light" style={{ minWidth: '32px', top: 0, zIndex: 10 }}>H</th>
                       <th className="text-center fw-normal small bg-light" style={{ minWidth: '32px', top: 0, zIndex: 10 }}>L</th>
                       <th className="text-center fw-normal small bg-light" style={{ minWidth: '32px', top: 0, zIndex: 10 }}>Hol</th>
+                      <th className="text-center fw-normal small bg-light" style={{ minWidth: '32px', top: 0, zIndex: 10 }}>W</th>
                       <th className="text-center fw-normal small bg-light" style={{ minWidth: '32px', top: 0, zIndex: 10 }}>A</th>
                       <th className="text-center fw-normal small bg-light" style={{ minWidth: '60px', top: 0, zIndex: 10 }}>Late</th>
                       <th className="text-center fw-normal small bg-light" style={{ minWidth: '50px', top: 0, zIndex: 10 }}>Hours</th>
@@ -1136,6 +1216,9 @@ const AttendanceReports = () => {
                                   statusIcon = '🎉';
                                   iconClass = 'text-warning';
                                   iconStyle = { fontSize: '14px' };
+                                } else if (dayRecord.status === 'weekend') {
+                                  statusIcon = <FaMoon size={12} />;
+                                  iconClass = 'text-secondary';
                                 } else if (dayRecord.status === 'absent') {
                                   statusIcon = '✗';
                                   iconClass = 'text-danger fw-bold';
@@ -1164,6 +1247,7 @@ const AttendanceReports = () => {
                             <td className="text-center"><Badge bg="warning" pill>{empStats.half_day}</Badge></td>
                             <td className="text-center"><Badge bg="purple" pill style={{ backgroundColor: '#6f42c1' }}>{empStats.on_leave || 0}</Badge></td>
                             <td className="text-center"><Badge bg="warning" pill style={{ backgroundColor: '#ffc107' }}>{empStats.holiday || 0}</Badge></td>
+                            <td className="text-center"><Badge bg="secondary" pill><FaMoon className="me-1" size={10} /> {empStats.weekend || 0}</Badge></td>
                             <td className="text-center"><Badge bg="danger" pill>{empStats.absent}</Badge></td>
                             <td className="text-center">
                               {empStats.late_count > 0 ? (
@@ -1179,7 +1263,7 @@ const AttendanceReports = () => {
                         );
                       })
                     ) : (
-                      <tr><td colSpan={daysInMonth + 12} className="text-center py-4">No attendance data</td></tr>
+                      <tr><td colSpan={daysInMonth + 13} className="text-center py-4">No attendance data</td></tr>
                     )}
                   </tbody>
                 </table>

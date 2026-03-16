@@ -38,14 +38,34 @@ const EmployeeList = () => {
     }
   }, [employeeUpdate]);
 
+  // EmployeeList.jsx - Updated fetchEmployees to get only active employees
+
   const fetchEmployees = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(API_ENDPOINTS.EMPLOYEES);
-      setEmployees(response.data);
+      // Add filter to get only active employees
+      const response = await axios.get(`${API_ENDPOINTS.EMPLOYEES}?active=true`);
+
+      console.log('🔍 API Response:', response);
+
+      let employeesData = [];
+
+      if (Array.isArray(response.data)) {
+        employeesData = response.data;
+      } else if (response.data && response.data.data && Array.isArray(response.data.data)) {
+        employeesData = response.data.data;
+      } else {
+        employeesData = [];
+      }
+
+      // Filter out inactive employees on frontend as backup
+      employeesData = employeesData.filter(emp => emp.is_active !== false);
+
+      console.log('✅ Active employees:', employeesData.length);
+      setEmployees(employeesData);
       setError('');
     } catch (error) {
-      console.error('Error fetching employees:', error);
+      console.error('❌ Error fetching employees:', error);
       setError(error.response?.data?.message || 'Failed to load employees');
       showNotification(error.response?.data?.message || 'Failed to load employees', 'danger');
     } finally {
@@ -57,11 +77,11 @@ const EmployeeList = () => {
     try {
       setDocLoading(true);
       setSelectedEmployeeForDocs(employee);
-      
+
       console.log('Fetching documents for employee:', employee.employee_id);
       const response = await axios.get(API_ENDPOINTS.EMPLOYEE_DOCUMENTS(employee.employee_id));
       console.log('Documents received:', response.data);
-      
+
       // Process documents - filter out null/empty values
       const docs = Object.entries(response.data)
         .filter(([key, value]) => value && value !== 'null' && value !== '')
@@ -71,7 +91,7 @@ const EmployeeList = () => {
           displayName: formatDocumentName(key),
           icon: getDocumentIcon(key, value)
         }));
-      
+
       console.log('Processed documents:', docs);
       setEmployeeDocuments(docs);
       setShowDocumentModal(true);
@@ -114,7 +134,7 @@ const EmployeeList = () => {
     return <FaFileAlt className="text-secondary" size={20} />;
   };
 
-  // View Document Function - Opens in new tab
+  // View Document Function - Using blob method
   const handleViewDocument = async (doc) => {
     try {
       if (!selectedEmployeeForDocs) {
@@ -124,17 +144,39 @@ const EmployeeList = () => {
 
       console.log('Viewing document:', doc);
       console.log('Employee ID:', selectedEmployeeForDocs.employee_id);
-      
-      // Use employee_id for the API call
-      const viewUrl = API_ENDPOINTS.EMPLOYEE_DOCUMENT_BY_TYPE(selectedEmployeeForDocs.employee_id, doc.type) + '?inline=true';
-      console.log('Opening URL:', viewUrl);
-      
+
+      setDocLoading(true);
+
+      // Make API call with responseType blob (token will be sent automatically via axios)
+      const response = await axios.get(
+        API_ENDPOINTS.EMPLOYEE_DOCUMENT_BY_TYPE(selectedEmployeeForDocs.employee_id, doc.type),
+        {
+          responseType: 'blob',
+          params: { inline: true } // Tell backend to send inline disposition
+        }
+      );
+
+      // Create blob from response
+      const blob = new Blob([response.data], {
+        type: response.headers['content-type'] || 'application/octet-stream'
+      });
+
+      // Create object URL
+      const url = window.URL.createObjectURL(blob);
+
       // Open in new tab
-      window.open(viewUrl, '_blank');
-      
+      window.open(url, '_blank');
+
+      // Clean up after some time
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+      }, 1000);
+
     } catch (error) {
       console.error('Error viewing document:', error);
-      showNotification('Failed to view document', 'danger');
+      showNotification(error.response?.data?.message || 'Failed to view document', 'danger');
+    } finally {
+      setDocLoading(false);
     }
   };
 
@@ -146,10 +188,9 @@ const EmployeeList = () => {
         return;
       }
 
+      setDocLoading(true);
       console.log('Downloading document:', doc);
-      console.log('Employee ID:', selectedEmployeeForDocs.employee_id);
 
-      // Make API call with responseType blob
       const response = await axios.get(
         API_ENDPOINTS.EMPLOYEE_DOCUMENT_BY_TYPE(selectedEmployeeForDocs.employee_id, doc.type),
         {
@@ -161,10 +202,10 @@ const EmployeeList = () => {
       );
 
       // Create blob from response
-      const blob = new Blob([response.data], { 
-        type: response.headers['content-type'] || 'application/octet-stream' 
+      const blob = new Blob([response.data], {
+        type: response.headers['content-type'] || 'application/octet-stream'
       });
-      
+
       // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = window.document.createElement('a');
@@ -172,7 +213,7 @@ const EmployeeList = () => {
       link.setAttribute('download', doc.filename);
       window.document.body.appendChild(link);
       link.click();
-      
+
       // Clean up
       setTimeout(() => {
         window.URL.revokeObjectURL(url);
@@ -182,14 +223,15 @@ const EmployeeList = () => {
       showNotification('Document downloaded successfully!', 'success');
     } catch (error) {
       console.error('Error downloading document:', error);
-      console.error('Error response:', error.response?.data);
       showNotification(error.response?.data?.message || 'Failed to download document', 'danger');
+    } finally {
+      setDocLoading(false);
     }
   };
 
   const handleDelete = async () => {
     if (!selectedEmployee) return;
-    
+
     setDeleting(true);
     try {
       await axios.delete(API_ENDPOINTS.EMPLOYEE_DELETE(selectedEmployee.id));
@@ -485,7 +527,7 @@ const EmployeeList = () => {
             <FaTrash size={40} className="text-danger mb-2" />
             <p className="mb-2">Are you sure you want to delete this employee?</p>
           </div>
-          
+
           {selectedEmployee && (
             <div className="alert alert-warning py-2 small">
               <strong>Employee Details:</strong><br />
@@ -494,23 +536,23 @@ const EmployeeList = () => {
               Department: {selectedEmployee.department}
             </div>
           )}
-          
+
           <p className="text-danger mb-0 small fw-bold">
             <small>⚠️ This action cannot be undone. All data associated with this employee will be permanently removed.</small>
           </p>
         </Modal.Body>
         <Modal.Footer className="py-2">
-          <Button 
-            variant="secondary" 
-            size="sm" 
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleCancelDelete}
             disabled={deleting}
           >
             Cancel
           </Button>
-          <Button 
-            variant="danger" 
-            size="sm" 
+          <Button
+            variant="danger"
+            size="sm"
             onClick={handleDelete}
             disabled={deleting}
           >

@@ -5,10 +5,12 @@ import { Form, Button, Card, Row, Col, Spinner, Alert, Modal, Table, Badge, Prog
 import { FaSave, FaArrowLeft, FaFileAlt, FaFileImage, FaFilePdf, FaDownload, FaEye, FaUpload, FaTrash, FaPlus } from 'react-icons/fa';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
+import { useNotification } from '../../context/NotificationContext'; // 👈 Import this
 
 const EditEmployee = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const { showNotification } = useNotification(); // 👈 Add this
 
     // Form states
     const [formData, setFormData] = useState({
@@ -110,17 +112,18 @@ const EditEmployee = () => {
         } catch (error) {
             console.error('❌ Error fetching employee:', error);
             setError(error.response?.data?.message || 'Failed to load employee details');
+            showNotification(error.response?.data?.message || 'Failed to load employee details', 'danger');
         } finally {
             setLoading(false);
         }
     };
 
+    // Updated fetchEmployeeDocuments with better debugging
     const fetchEmployeeDocuments = async (employeeId) => {
         try {
             setDocLoading(true);
             console.log('📄 Fetching documents for employee ID:', employeeId);
 
-            // Use employee_id, not the database id
             const response = await axios.get(API_ENDPOINTS.EMPLOYEE_DOCUMENTS(employeeId));
             console.log('✅ Documents response:', response.data);
 
@@ -134,7 +137,7 @@ const EditEmployee = () => {
                     icon: getDocumentIcon(key, value)
                 }));
 
-            console.log('Processed documents:', docs);
+            console.log('📊 Processed documents:', docs);
             setEmployeeDocuments(docs);
 
         } catch (error) {
@@ -206,9 +209,10 @@ const EditEmployee = () => {
                 window.document.body.removeChild(link);
             }, 100);
 
+            showNotification('Document downloaded successfully!', 'success');
         } catch (error) {
             console.error('Error downloading document:', error);
-            alert(error.response?.data?.message || 'Failed to download document');
+            showNotification(error.response?.data?.message || 'Failed to download document', 'danger');
         }
     };
 
@@ -240,6 +244,7 @@ const EditEmployee = () => {
         setSelectedDocTypes(newTypes);
     };
 
+    // Updated uploadDocuments function with refresh
     const uploadDocuments = async () => {
         const validUploads = selectedFiles.reduce((acc, file, index) => {
             if (file && selectedDocTypes[index]) {
@@ -252,13 +257,14 @@ const EditEmployee = () => {
         }, []);
 
         if (validUploads.length === 0) {
-            alert('Please select files and document types');
+            showNotification('Please select files and document types', 'warning');
             return;
         }
 
         setUploading(true);
         let successCount = 0;
         let failCount = 0;
+        let uploadedTypes = [];
 
         for (let i = 0; i < validUploads.length; i++) {
             const upload = validUploads[i];
@@ -289,6 +295,7 @@ const EditEmployee = () => {
 
                 console.log('Upload response:', response.data);
                 successCount++;
+                uploadedTypes.push(upload.type);
             } catch (error) {
                 console.error(`❌ Error uploading ${upload.type}:`, error);
                 console.error('Error details:', error.response?.data);
@@ -297,21 +304,27 @@ const EditEmployee = () => {
         }
 
         if (successCount > 0) {
-            alert(`${successCount} document(s) uploaded successfully!`);
-            // Refresh documents list
-            fetchEmployeeDocuments(formData.employee_id);
+            showNotification(`${successCount} document(s) uploaded successfully!`, 'success');
+            
+            // 👇 IMPORTANT: Refresh documents list after successful upload
+            console.log('🔄 Refreshing documents list...');
+            await fetchEmployeeDocuments(formData.employee_id);
+            
+            // Close the upload modal
+            setShowUploadModal(false);
         }
+        
         if (failCount > 0) {
-            alert(`${failCount} document(s) failed to upload`);
+            showNotification(`${failCount} document(s) failed to upload`, 'danger');
         }
 
         setUploading(false);
         setSelectedFiles([]);
         setSelectedDocTypes([]);
         setUploadProgress(0);
-        setShowUploadModal(false);
     };
 
+    // Updated handleDeleteDocument with refresh
     const handleDeleteDocument = async (doc) => {
         if (!window.confirm(`Are you sure you want to delete ${doc.displayName}?`)) {
             return;
@@ -319,12 +332,14 @@ const EditEmployee = () => {
 
         try {
             await axios.delete(API_ENDPOINTS.EMPLOYEE_DOCUMENT_DELETE(formData.employee_id, doc.type));
-            alert('Document deleted successfully!');
-            // Refresh documents list
-            fetchEmployeeDocuments(formData.employee_id);
+            showNotification('Document deleted successfully!', 'success');
+            
+            // 👇 Refresh documents list after deletion
+            await fetchEmployeeDocuments(formData.employee_id);
+            
         } catch (error) {
             console.error('Error deleting document:', error);
-            alert(error.response?.data?.message || 'Failed to delete document');
+            showNotification(error.response?.data?.message || 'Failed to delete document', 'danger');
         }
     };
 
@@ -345,6 +360,7 @@ const EditEmployee = () => {
         try {
             await axios.put(API_ENDPOINTS.EMPLOYEE_BY_ID(id), formData);
             setSuccess('Employee updated successfully!');
+            showNotification('Employee updated successfully!', 'success');
 
             // Redirect after 2 seconds
             setTimeout(() => {
@@ -354,6 +370,7 @@ const EditEmployee = () => {
         } catch (error) {
             console.error('Error updating employee:', error);
             setError(error.response?.data?.message || 'Failed to update employee');
+            showNotification(error.response?.data?.message || 'Failed to update employee', 'danger');
         } finally {
             setSaving(false);
         }
