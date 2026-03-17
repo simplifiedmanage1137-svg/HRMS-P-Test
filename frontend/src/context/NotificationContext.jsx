@@ -1,6 +1,7 @@
 // context/NotificationContext.jsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import API_ENDPOINTS from '../config/api';
 
 const NotificationContext = createContext();
 
@@ -17,11 +18,12 @@ export const NotificationProvider = ({ children }) => {
   const [employeeUpdate, setEmployeeUpdate] = useState(null);
   const [eventNotifications, setEventNotifications] = useState([]);
   const [todayEvents, setTodayEvents] = useState({ birthdays: [], anniversaries: [], total: 0 });
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Fetch today's events (birthdays and anniversaries)
   const fetchTodayEvents = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/employees/today-events');
+      const response = await axios.get(API_ENDPOINTS.TODAY_EVENTS);
       setTodayEvents(response.data);
       
       // Create notifications for events
@@ -52,12 +54,19 @@ export const NotificationProvider = ({ children }) => {
       });
       
       setEventNotifications(events);
+      updateUnreadCount(events);
     } catch (error) {
       // Don't show error in console for 404 - it's expected if route doesn't exist
       if (error.response?.status !== 404) {
         console.error('Error fetching today events:', error);
       }
     }
+  };
+
+  // Update unread count
+  const updateUnreadCount = (events = eventNotifications) => {
+    const count = events.filter(e => !e.read).length;
+    setUnreadCount(count);
   };
 
   // Check for events every hour
@@ -68,6 +77,11 @@ export const NotificationProvider = ({ children }) => {
     
     return () => clearInterval(interval);
   }, []);
+
+  // Update unread count when events change
+  useEffect(() => {
+    updateUnreadCount();
+  }, [eventNotifications]);
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -85,17 +99,26 @@ export const NotificationProvider = ({ children }) => {
   };
 
   const markEventAsRead = (eventId) => {
-    setEventNotifications(prev => 
-      prev.map(event => 
+    setEventNotifications(prev => {
+      const updated = prev.map(event => 
         event.id === eventId ? { ...event, read: true } : event
-      )
-    );
+      );
+      updateUnreadCount(updated);
+      return updated;
+    });
   };
 
   const markAllEventsAsRead = () => {
-    setEventNotifications(prev => 
-      prev.map(event => ({ ...event, read: true }))
-    );
+    setEventNotifications(prev => {
+      const updated = prev.map(event => ({ ...event, read: true }));
+      updateUnreadCount(updated);
+      return updated;
+    });
+  };
+
+  // Get unread events count
+  const getUnreadEventCount = () => {
+    return eventNotifications.filter(e => !e.read).length;
   };
 
   return (
@@ -109,7 +132,9 @@ export const NotificationProvider = ({ children }) => {
       todayEvents,
       fetchTodayEvents,
       markEventAsRead,
-      markAllEventsAsRead
+      markAllEventsAsRead,
+      unreadCount,
+      getUnreadEventCount
     }}>
       {children}
     </NotificationContext.Provider>

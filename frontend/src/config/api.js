@@ -49,6 +49,10 @@ export const API_ENDPOINTS = {
     ATTENDANCE_HEARTBEAT: `${API_BASE_URL}/api/attendance/heartbeat`,
     ATTENDANCE_CHECK_ACTIVE: `${API_BASE_URL}/api/attendance/check-active`,
     ATTENDANCE_MARK_ABSENT: `${API_BASE_URL}/api/attendance/mark-absent`,
+    
+    // Overtime endpoints
+    OVERTIME_SUMMARY: (employeeId, month, year) => 
+        `${API_BASE_URL}/api/attendance/overtime/${employeeId}/${month}/${year}`,
 
     // Notification endpoints
     NOTIFICATIONS: `${API_BASE_URL}/api/notifications`,
