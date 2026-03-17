@@ -263,7 +263,7 @@ const employeeRoutes = require('./routes/employeeRoutes');
 app.use('/api/employees', authenticateToken, employeeRoutes);
 
 // ============== LEAVE ROUTES ==============
-const leaveRoutes = require('./routes/leaveRoutes')(supabase);
+const leaveRoutes = require('./routes/leaveRoutes');
 app.use('/api/leaves', authenticateToken, leaveRoutes);
 
 // ============== ATTENDANCE ROUTES ==============

@@ -618,7 +618,7 @@ const EmployeeDashboard = () => {
     if (seconds > 0 || (hours === 0 && minutes === 0)) parts.push(`${seconds}s`);
     
     return parts.join(' ');
-  };
+};
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
