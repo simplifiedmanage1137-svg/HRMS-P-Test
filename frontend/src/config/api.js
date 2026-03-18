@@ -3,6 +3,10 @@
 // For Vite (uses import.meta.env)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+// Add this debug log
+console.log('🔧 API Base URL:', API_BASE_URL);
+console.log('🔧 Environment:', import.meta.env.MODE);
+
 export const API_ENDPOINTS = {
     // Auth endpoints
     LOGIN: `${API_BASE_URL}/api/auth/login`,
@@ -187,5 +191,12 @@ export const API_ENDPOINTS = {
     HEALTH_CHECK: `${API_BASE_URL}/api/health`,
     HEALTH_CHECK_DB: `${API_BASE_URL}/api/health/db`
 };
+
+// Log all endpoints for debugging
+console.log('🔧 API Endpoints loaded:', {
+    LOGIN: API_ENDPOINTS.LOGIN,
+    TODAY_EVENTS: API_ENDPOINTS.TODAY_EVENTS,
+    BASE_URL: API_BASE_URL
+});
 
 export default API_ENDPOINTS;

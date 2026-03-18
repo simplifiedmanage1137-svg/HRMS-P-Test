@@ -1,4 +1,4 @@
-// context/AuthContext.jsx
+// src/context/AuthContext.jsx
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import axios from 'axios';
 import API_ENDPOINTS from '../config/api';
@@ -30,11 +30,15 @@ export const AuthProvider = ({ children }) => {
             axios.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
         }
         setLoading(false);
+        
+        // Log the API endpoint being used
+        console.log('🔧 Auth API Endpoint:', API_ENDPOINTS.LOGIN);
     }, []);
 
     const login = async (email, password) => {
         try {
             console.log('📤 Attempting login with:', { email });
+            console.log('📤 Using API endpoint:', API_ENDPOINTS.LOGIN);
             
             const response = await axios.post(API_ENDPOINTS.LOGIN, {
                 email,
@@ -75,6 +79,7 @@ export const AuthProvider = ({ children }) => {
         } catch (error) {
             console.error('❌ Login error:', error);
             console.error('❌ Login error details:', error.response?.data);
+            console.error('❌ Error config:', error.config); // This will show the URL it tried to hit
             
             return { 
                 success: false, 
