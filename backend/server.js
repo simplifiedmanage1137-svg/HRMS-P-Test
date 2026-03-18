@@ -12,10 +12,10 @@ const app = express();
 dotenv.config();
 
 // ============== MIDDLEWARE ==============
-// app.use(cors({
-//     origin: 'http://localhost:5173',
-//     credentials: true
-// }));
+app.use(cors({
+    origin: 'http://localhost:5173',
+    credentials: true
+}));
 
 // app.use(cors({
 //     origin: ['http://localhost:5173', 'https://employee-management-system-24rs0uvjz-b2bindemand-hubs-projects.vercel.app'],
@@ -27,10 +27,11 @@ app.get('/', (req, res) => {
 });
 
 app.use(cors({
-    origin: [
+     origin: [
         'http://localhost:5173',
         'http://localhost:3000',
-        'https://employee-management-system-phi-five.vercel.app',  // Ye add karo
+        'https://employee-management-system-zeta-lac.vercel.app', // ✅ ADD THIS
+        'https://employee-management-system-phi-five.vercel.app',
         'https://employee-management-system-24rs0uvjz-b2bindemand-hubs-projects.vercel.app'
     ],
     optionsSuccessStatus: 200,
@@ -363,7 +364,8 @@ app.listen(PORT, () => {
     console.log('\n' + '='.repeat(70));
     console.log(`🚀 SERVER STARTED SUCCESSFULLY`);
     console.log('='.repeat(70));
-    console.log(`Server running on port ${PORT}`);
+    console.log(`📡 Server running on: http://localhost:${PORT}`);
+    // console.log(`Server running on port ${PORT}`);
     console.log(`📦 Database: Supabase`);
     console.log('='.repeat(70));
     console.log(`📝 TEST ROUTES:`);
