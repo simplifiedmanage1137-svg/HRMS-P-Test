@@ -202,31 +202,6 @@ const Login = () => {
                   </Button>
                 </Form>
               </Card.Body>
-
-              {/* Card Footer with Demo Credentials */}
-              <Card.Footer className="bg-light border-0 p-3">
-                <div className="text-center small">
-                  <p className="text-muted mb-2 fw-semibold">Demo Credentials (Click to fill):</p>
-                  <div className="d-flex flex-column gap-2">
-                    <div 
-                      className="d-flex align-items-center justify-content-center gap-2 cursor-pointer"
-                      onClick={() => fillDemoCredentials('admin')}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <Badge bg="primary" pill className="px-3 py-1">Admin</Badge>
-                      <span className="text-muted">admin@ems.com / admin123</span>
-                    </div>
-                    <div 
-                      className="d-flex align-items-center justify-content-center gap-2 cursor-pointer"
-                      onClick={() => fillDemoCredentials('employee')}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <Badge bg="success" pill className="px-3 py-1">Employee</Badge>
-                      <span className="text-muted">emp_B2B250201@ems.com / Welcome@123</span>
-                    </div>
-                  </div>
-                </div>
-              </Card.Footer>
             </Card>
 
             {/* Footer Note */}
