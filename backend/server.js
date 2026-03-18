@@ -22,6 +22,10 @@ dotenv.config();
 //     credentials: true
 // }));
 
+app.get('/', (req, res) => {
+    res.send('🚀 API is running on Render');
+});
+
 app.use(cors({
     origin: [
         'http://localhost:5173',
@@ -359,7 +363,7 @@ app.listen(PORT, () => {
     console.log('\n' + '='.repeat(70));
     console.log(`🚀 SERVER STARTED SUCCESSFULLY`);
     console.log('='.repeat(70));
-    console.log(`📡 Server running on: http://localhost:${PORT}`);
+    console.log(`Server running on port ${PORT}`);
     console.log(`📦 Database: Supabase`);
     console.log('='.repeat(70));
     console.log(`📝 TEST ROUTES:`);
