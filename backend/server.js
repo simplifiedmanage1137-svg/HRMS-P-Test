@@ -45,7 +45,7 @@ const allowedOrigins = [
     'http://localhost:3000',   // Local development (React default)
     'http://127.0.0.1:5173',
     'http://127.0.0.1:3000',
-    'https://employee-management-system-six-kappa.vercel.app/.app', // Your Vercel frontend
+    'https://employee-management-system-six-kappa.vercel.app/', // Your Vercel frontend
     'https://employee-management-system-brvo.onrender.com' // Backend URL (optional)
 ];
 
