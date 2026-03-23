@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Card, Button, Alert, Spinner, Badge,
-  Row, Col, Modal, Table, Tabs, Tab
+  Row, Col, Modal, Table
 } from 'react-bootstrap';
 import {
   FaCheckCircle,
@@ -35,7 +35,6 @@ import {
   Filler
 } from 'chart.js';
 
-// Register ChartJS components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -96,151 +95,84 @@ const Attendance = () => {
 
   const STORAGE_KEY = `attendance_session_${user?.employeeId}`;
 
-  // Weekly off days (0 = Sunday, 6 = Saturday)
-  const WEEKLY_OFF_DAYS = [0, 6];
-
-  // Office coordinates
   const OFFICE_COORDS = {
     name: 'Viman Nagar Office',
-    address: '8th Floor SkyVista, 805, Mhada Colony, Viman Nagar, Pune 411014',
     latitude: 18.56835629424307,
     longitude: 73.90856078144989,
-    radius: 50 // meters
+    radius: 50
   };
 
-  const saveSessionToStorage = (session) => {
-    if (!user?.employeeId) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  };
-
-  const clearSessionFromStorage = () => {
-    if (!user?.employeeId) return;
-    localStorage.removeItem(STORAGE_KEY);
-  };
-
-  const loadSessionFromStorage = () => {
-    if (!user?.employeeId) return null;
+  // Helper function to format time
+  const formatTime = (datetime) => {
+    if (!datetime) return '--:--';
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : null;
-    } catch {
+      const date = new Date(datetime);
+      if (isNaN(date.getTime())) return '--:--';
+      return date.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (error) {
+      return '--:--';
+    }
+  };
+
+  // Helper function to format short date
+  const formatShortDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  // Format late time in Hours, Minutes, Seconds format - FIXED to show hours when applicable
+  const formatLateTime = (lateMinutes) => {
+    // Handle null, undefined, or invalid values
+    if (!lateMinutes || lateMinutes === 0 || lateMinutes === null || lateMinutes === undefined) {
       return null;
     }
+    
+    // Parse to number if it's a string
+    let minutes = typeof lateMinutes === 'string' ? parseFloat(lateMinutes) : lateMinutes;
+    
+    // Check if it's a valid number
+    if (isNaN(minutes) || minutes <= 0) {
+      return null;
+    }
+    
+    // Convert minutes to hours, minutes, seconds
+    const totalMinutes = minutes;
+    const hours = Math.floor(totalMinutes / 60);
+    const remainingMinutes = Math.floor(totalMinutes % 60);
+    const seconds = Math.round((totalMinutes - Math.floor(totalMinutes)) * 60);
+    
+    // Format based on what's available
+    if (hours > 0) {
+      if (remainingMinutes > 0 && seconds > 0) {
+        return `${hours}h ${remainingMinutes}m ${seconds}s`;
+      } else if (remainingMinutes > 0) {
+        return `${hours}h ${remainingMinutes}m`;
+      } else if (seconds > 0) {
+        return `${hours}h ${seconds}s`;
+      } else {
+        return `${hours}h`;
+      }
+    } else if (remainingMinutes > 0) {
+      if (seconds > 0) {
+        return `${remainingMinutes}m ${seconds}s`;
+      } else {
+        return `${remainingMinutes}m`;
+      }
+    } else {
+      return `${seconds}s`;
+    }
   };
 
-  useEffect(() => {
-    if (!user?.employeeId) return;
-
-    const storedSession = loadSessionFromStorage();
-    if (storedSession) {
-      setActiveSession(storedSession);
-    }
-
-    fetchTodayAttendance();
-    getCurrentLocation();
-
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-
-    const handleBeforeUnload = (e) => {
-      if (activeSession) {
-        e.preventDefault();
-        e.returnValue = 'You have an active session. Please clock out before leaving.';
-        return e.returnValue;
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      clearInterval(timer);
-      if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-      }
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [user]);
-
-  useEffect(() => {
-    if (user?.employeeId) {
-      fetchAttendanceHistory();
-    }
-  }, [user?.employeeId, attendance]);
-
-  useEffect(() => {
-    if (activeSession && location) {
-      const interval = setInterval(sendHeartbeat, 30000);
-      setHeartbeatInterval(interval);
-      return () => clearInterval(interval);
-    }
-  }, [activeSession, location]);
-
-  const getCurrentLocation = () => {
-    setLocationLoading(true);
-    setLocationError(null);
-
-    if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by your browser');
-      setLocationLoading(false);
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const newLocation = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-          timestamp: position.timestamp
-        };
-
-        setLocation(newLocation);
-
-        const distance = calculateDistance(
-          newLocation.latitude,
-          newLocation.longitude,
-          OFFICE_COORDS.latitude,
-          OFFICE_COORDS.longitude
-        );
-
-        const isInOffice = distance <= OFFICE_COORDS.radius;
-
-        setGeofenceInfo({
-          distance: Math.round(distance * 100) / 100,
-          isInOffice,
-          requiredRadius: OFFICE_COORDS.radius
-        });
-
-        setLocationLoading(false);
-      },
-      (error) => {
-        console.error('❌ Location error:', error);
-        let errorMessage = 'Failed to get your location';
-
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage = 'Please enable location access to mark attendance';
-            break;
-          case error.POSITION_UNAVAILABLE:
-            errorMessage = 'Location information is unavailable';
-            break;
-          case error.TIMEOUT:
-            errorMessage = 'Location request timed out';
-            break;
-        }
-
-        setLocationError(errorMessage);
-        setLocationLoading(false);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
-    );
-  };
-
+  // Calculate distance between two coordinates
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371e3;
     const φ1 = lat1 * Math.PI / 180;
@@ -256,33 +188,136 @@ const Attendance = () => {
     return R * c;
   };
 
+  // Get attendance status badge with late display in Hours/Minutes/Seconds format
+  const getAttendanceStatusBadge = (record) => {
+    // Weekly off check
+    if (record.isWeeklyOff) {
+      return <Badge bg="secondary" className="px-2 py-1"><FaMoon className="me-1" size={10} /> W-OFF</Badge>;
+    }
+
+    // Not clocked in
+    if (!record.clock_in) {
+      return <Badge bg="secondary" className="px-2 py-1"><FaClock className="me-1" size={10} /> Not Clocked</Badge>;
+    }
+
+    const isLate = record.late_minutes > 0;
+    // Get late display from record or format it
+    let lateDisplay = record.late_display;
+    if (isLate && !lateDisplay) {
+      lateDisplay = formatLateTime(record.late_minutes);
+    }
+    
+    // Working (clocked in but not out)
+    if (record.clock_in && !record.clock_out) {
+      if (isLate) {
+        return (
+          <Badge bg="danger" className="px-2 py-1 d-inline-flex align-items-center">
+            <FaExclamationTriangle className="me-1" size={10} />
+            Working {lateDisplay ? `(+${lateDisplay})` : '(Late)'}
+          </Badge>
+        );
+      }
+      return <Badge bg="info" className="px-2 py-1"><FaClock className="me-1" size={10} /> Working</Badge>;
+    }
+
+    // Present (clocked out)
+    if (record.status === 'present') {
+      if (isLate) {
+        return (
+          <Badge bg="danger" className="px-2 py-1 d-inline-flex align-items-center">
+            <FaExclamationTriangle className="me-1" size={10} />
+            Present {lateDisplay ? `(+${lateDisplay})` : '(Late)'}
+          </Badge>
+        );
+      }
+      return <Badge bg="success" className="px-2 py-1"><FaCheckCircle className="me-1" size={10} /> Present</Badge>;
+    }
+
+    // Half day
+    if (record.status === 'half_day') {
+      if (isLate) {
+        return (
+          <Badge bg="danger" className="px-2 py-1 d-inline-flex align-items-center">
+            <FaExclamationTriangle className="me-1" size={10} />
+            Half Day {lateDisplay ? `(+${lateDisplay})` : '(Late)'}
+          </Badge>
+        );
+      }
+      return <Badge bg="warning" className="text-dark px-2 py-1"><FaCloudSun className="me-1" size={10} /> Half Day</Badge>;
+    }
+
+    // Absent
+    if (record.status === 'absent') {
+      return <Badge bg="danger" className="px-2 py-1"><FaExclamationTriangle className="me-1" size={10} /> Absent</Badge>;
+    }
+
+    return <Badge bg="secondary" className="px-2 py-1">Not Clocked</Badge>;
+  };
+
+  // Save session to local storage
+  const saveSessionToStorage = (session) => {
+    if (!user?.employeeId) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  };
+
+  // Clear session from local storage
+  const clearSessionFromStorage = () => {
+    if (!user?.employeeId) return;
+    localStorage.removeItem(STORAGE_KEY);
+  };
+
+  // Load session from local storage
+  const loadSessionFromStorage = () => {
+    if (!user?.employeeId) return null;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Send heartbeat to server
+  const sendHeartbeat = async () => {
+    try {
+      if (activeSession && location) {
+        await axios.post(API_ENDPOINTS.ATTENDANCE_HEARTBEAT, {
+          employee_id: user.employeeId,
+          session_id: activeSession.session_id,
+          latitude: location.latitude,
+          longitude: location.longitude
+        });
+      }
+    } catch (error) {
+      console.error('Heartbeat failed:', error);
+    }
+  };
+
+  // Fetch today's attendance
   const fetchTodayAttendance = async () => {
     try {
-      console.log('📊 Fetching today attendance for:', user.employeeId);
-
       const response = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
-
-      console.log('📊 Today attendance response:', response.data);
-
       const attendanceData = response.data.attendance;
       const serverSession = response.data.active_session;
 
+      console.log('📊 Today attendance from API:', attendanceData);
+
       if (attendanceData) {
+        // Ensure late_display is set with proper format
+        if (attendanceData.late_minutes > 0 && !attendanceData.late_display) {
+          attendanceData.late_display = formatLateTime(attendanceData.late_minutes);
+        }
         setAttendance(attendanceData);
-        
-        // Check if clocked out today
         if (attendanceData.clock_out) {
           setHasClockedOutToday(true);
         }
       }
 
       if (serverSession) {
-        console.log('✅ Found active session from server:', serverSession);
         setActiveSession(serverSession);
         saveSessionToStorage(serverSession);
         setHasClockedOutToday(false);
       } else if (attendanceData?.clock_in && !attendanceData?.clock_out) {
-        console.log('✅ Inferring session from attendance record');
         const inferredSession = {
           session_id: attendanceData.session_id || 'temp-' + Date.now(),
           clock_in_time: attendanceData.clock_in
@@ -291,7 +326,6 @@ const Attendance = () => {
         saveSessionToStorage(inferredSession);
         setHasClockedOutToday(false);
       } else {
-        console.log('❌ No active session found');
         setActiveSession(null);
         clearSessionFromStorage();
       }
@@ -303,57 +337,8 @@ const Attendance = () => {
     }
   };
 
-  const fetchAttendanceHistory = async () => {
-    try {
-      const today = new Date();
-      
-      const endDate = new Date(today);
-      endDate.setHours(23, 59, 59, 999);
-
-      const startDate = new Date(today);
-      startDate.setDate(startDate.getDate() - 30);
-      startDate.setHours(0, 0, 0, 0);
-
-      const formatDate = (date) => {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-      };
-
-      const startDateStr = formatDate(startDate);
-      const endDateStr = formatDate(endDate);
-
-      console.log('📅 Fetching attendance from', startDateStr, 'to', endDateStr);
-
-      const response = await axios.get(
-        `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${startDateStr}&end=${endDateStr}&employee_id=${user.employeeId}`
-      );
-
-      console.log('📊 Attendance API Response:', response.data);
-
-      let history = response.data.attendance || [];
-      
-      // Generate complete calendar with all dates
-      const completeHistory = generateLast30DaysAttendance(history, startDate, endDate);
-
-      setAttendanceHistory(completeHistory);
-      calculateMonthlyStats(completeHistory);
-      updateChartData(completeHistory);
-
-    } catch (error) {
-      console.error('❌ Error fetching attendance history:', error);
-      const today = new Date();
-      const startDate = new Date(today);
-      startDate.setDate(startDate.getDate() - 30);
-      const emptyHistory = generateLast30DaysAttendance([], startDate, today);
-      setAttendanceHistory(emptyHistory);
-      calculateMonthlyStats(emptyHistory);
-      updateChartData(emptyHistory);
-    }
-  };
-
-  const generateLast30DaysAttendance = (history, startDate, endDate) => {
+  // Generate last 30 days attendance with proper late display
+  const generateLast30DaysAttendance = (history) => {
     const completeHistory = [];
     const today = new Date();
 
@@ -366,27 +351,29 @@ const Attendance = () => {
 
     const todayStr = formatDateStr(today);
 
-    // Create a map of existing records
+    // Create map of existing records
     const historyMap = {};
     history.forEach(record => {
       if (record.attendance_date) {
-        let dateKey;
-        if (record.attendance_date.includes('T')) {
-          dateKey = record.attendance_date.split('T')[0];
-        } else {
-          dateKey = record.attendance_date;
+        let dateKey = record.attendance_date.includes('T') 
+          ? record.attendance_date.split('T')[0] 
+          : record.attendance_date;
+        
+        // Ensure late_display is set with proper format
+        if (record.late_minutes > 0 && !record.late_display) {
+          record.late_display = formatLateTime(record.late_minutes);
         }
-
+        
         historyMap[dateKey] = record;
       }
     });
 
-    // Add today's record from attendance state if available and not in history
-    if (attendance && !historyMap[todayStr]) {
-      historyMap[todayStr] = {
-        ...attendance,
-        attendance_date: todayStr
-      };
+    // Always use latest attendance state for today
+    if (attendance && attendance.attendance_date === todayStr) {
+      if (attendance.late_minutes > 0 && !attendance.late_display) {
+        attendance.late_display = formatLateTime(attendance.late_minutes);
+      }
+      historyMap[todayStr] = attendance;
     }
 
     // Generate 30 days
@@ -403,20 +390,32 @@ const Attendance = () => {
       const existingRecord = historyMap[dateStr];
 
       if (existingRecord) {
-        // Record exists in database
+        // Get late minutes and format display
+        const lateMinutes = existingRecord.late_minutes || 0;
+        let lateDisplay = existingRecord.late_display;
+        
+        // If late_display not set but late_minutes > 0, format it
+        if (lateMinutes > 0 && !lateDisplay) {
+          lateDisplay = formatLateTime(lateMinutes);
+          console.log(`Formatting late for ${dateStr}: ${lateMinutes} minutes -> ${lateDisplay}`);
+        }
+        
         let displayStatus = existingRecord.status;
+        let totalHoursDisplay = existingRecord.total_hours_display;
         let totalHours = existingRecord.total_hours;
         let clockOut = existingRecord.clock_out;
 
-        // If clocked in but not out, show as "Working" for today
+        // If this is today and user is working, calculate current hours
         if (isToday && existingRecord.clock_in && !existingRecord.clock_out) {
           displayStatus = 'working';
           clockOut = null;
-          
-          // Calculate current hours
           const clockIn = new Date(existingRecord.clock_in);
           const now = new Date();
-          totalHours = ((now - clockIn) / (1000 * 60 * 60)).toFixed(2);
+          const diffMinutes = (now - clockIn) / (1000 * 60);
+          const hours = Math.floor(diffMinutes / 60);
+          const minutes = Math.round(diffMinutes % 60);
+          totalHoursDisplay = `${hours}h ${minutes}m`;
+          totalHours = diffMinutes / 60;
         }
 
         completeHistory.push({
@@ -430,12 +429,12 @@ const Attendance = () => {
           clock_in: existingRecord.clock_in,
           clock_out: clockOut,
           total_hours: totalHours,
+          total_hours_display: totalHoursDisplay,
           status: displayStatus,
-          late_minutes: existingRecord.late_minutes || 0,
-          late_display: existingRecord.late_display
+          late_minutes: lateMinutes,
+          late_display: lateDisplay
         });
       } else {
-        // No record for this date
         let status = 'not_clocked';
         if (isWeeklyOff) {
           status = 'weekly_off';
@@ -450,6 +449,7 @@ const Attendance = () => {
           clock_in: null,
           clock_out: null,
           total_hours: null,
+          total_hours_display: null,
           status: status,
           late_minutes: 0,
           late_display: null,
@@ -458,10 +458,20 @@ const Attendance = () => {
       }
     }
 
-    // Sort by date descending (today first)
+    // Log late records in final history
+    const lateRecords = completeHistory.filter(r => r.late_minutes > 0);
+    if (lateRecords.length > 0) {
+      console.log('🔴 Late records in final history:', lateRecords.map(r => ({
+        date: r.date,
+        late_minutes: r.late_minutes,
+        late_display: r.late_display
+      })));
+    }
+
     return completeHistory.sort((a, b) => b.date.localeCompare(a.date));
   };
 
+  // Calculate monthly statistics
   const calculateMonthlyStats = (history) => {
     let present = 0;
     let absent = 0;
@@ -479,9 +489,7 @@ const Attendance = () => {
       } else if (record.status === 'present') {
         present++;
         workingDaysCount++;
-        if (record.total_hours) {
-          totalHours += parseFloat(record.total_hours);
-        }
+        if (record.total_hours) totalHours += parseFloat(record.total_hours);
         if (parseFloat(record.late_minutes) > 0) {
           lateDays++;
           totalLateMinutes += parseFloat(record.late_minutes);
@@ -489,9 +497,7 @@ const Attendance = () => {
       } else if (record.status === 'half_day') {
         halfDays++;
         workingDaysCount++;
-        if (record.total_hours) {
-          totalHours += parseFloat(record.total_hours);
-        }
+        if (record.total_hours) totalHours += parseFloat(record.total_hours);
         if (parseFloat(record.late_minutes) > 0) {
           lateDays++;
           totalLateMinutes += parseFloat(record.late_minutes);
@@ -500,6 +506,10 @@ const Attendance = () => {
         absent++;
       } else if (record.status === 'on_leave') {
         leaves++;
+      } else if (record.status === 'working' && parseFloat(record.late_minutes) > 0) {
+        // Count working days with late as late days
+        lateDays++;
+        totalLateMinutes += parseFloat(record.late_minutes);
       }
     });
 
@@ -517,9 +527,9 @@ const Attendance = () => {
     });
   };
 
+  // Update chart data
   const updateChartData = (history) => {
     const sortedHistory = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
-
     const labels = [];
     const data = [];
 
@@ -532,53 +542,126 @@ const Attendance = () => {
 
     setChartData({
       labels: labels.slice(-15),
-      datasets: [
-        {
-          label: 'Hours Worked',
-          data: data.slice(-15),
-          borderColor: 'rgb(75, 192, 192)',
-          backgroundColor: 'rgba(75, 192, 192, 0.1)',
-          tension: 0.4,
-          fill: true,
-          pointBackgroundColor: data.slice(-15).map(v => v >= 8 ? 'rgb(40, 167, 69)' : v >= 5 ? 'rgb(255, 193, 7)' : 'rgb(220, 53, 69)'),
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          pointRadius: 5,
-          pointHoverRadius: 7
-        }
-      ]
+      datasets: [{
+        label: 'Hours Worked',
+        data: data.slice(-15),
+        borderColor: 'rgb(75, 192, 192)',
+        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+        tension: 0.4,
+        fill: true,
+        pointBackgroundColor: data.slice(-15).map(v => v >= 8 ? 'rgb(40, 167, 69)' : v >= 5 ? 'rgb(255, 193, 7)' : 'rgb(220, 53, 69)'),
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 7
+      }]
     });
   };
 
-  const sendHeartbeat = async () => {
+  // Fetch attendance history
+  const fetchAttendanceHistory = async () => {
     try {
-      if (activeSession && location) {
-        await axios.post(API_ENDPOINTS.ATTENDANCE_HEARTBEAT, {
-          employee_id: user.employeeId,
-          session_id: activeSession.session_id,
-          latitude: location.latitude,
-          longitude: location.longitude
-        });
-      }
+      const today = new Date();
+      const endDate = new Date(today);
+      endDate.setHours(23, 59, 59, 999);
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - 30);
+      startDate.setHours(0, 0, 0, 0);
+
+      const formatDate = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+
+      const response = await axios.get(
+        `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${formatDate(startDate)}&end=${formatDate(endDate)}&employee_id=${user.employeeId}`
+      );
+
+      console.log('📊 Attendance history from API:', response.data.attendance?.length, 'records');
+      
+      // Log late records for debugging
+      const lateRecords = response.data.attendance?.filter(r => r.late_minutes > 0) || [];
+      console.log('📊 Late records from API:', lateRecords.map(r => ({
+        date: r.attendance_date,
+        late_minutes: r.late_minutes,
+        late_display: r.late_display
+      })));
+
+      let history = response.data.attendance || [];
+      const completeHistory = generateLast30DaysAttendance(history);
+      
+      // Log final history late records
+      const finalLateRecords = completeHistory.filter(r => r.late_minutes > 0);
+      console.log('📊 Final late records in history:', finalLateRecords.map(r => ({
+        date: r.date,
+        late_minutes: r.late_minutes,
+        late_display: r.late_display
+      })));
+      
+      setAttendanceHistory(completeHistory);
+      calculateMonthlyStats(completeHistory);
+      updateChartData(completeHistory);
     } catch (error) {
-      console.error('Heartbeat failed:', error);
+      console.error('Error fetching attendance history:', error);
+      const emptyHistory = generateLast30DaysAttendance([]);
+      setAttendanceHistory(emptyHistory);
+      calculateMonthlyStats(emptyHistory);
+      updateChartData(emptyHistory);
     }
   };
 
+  // Get current location
+  const getCurrentLocation = () => {
+    setLocationLoading(true);
+    setLocationError(null);
+
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation is not supported');
+      setLocationLoading(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const newLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp
+        };
+        setLocation(newLocation);
+
+        const distance = calculateDistance(
+          newLocation.latitude, newLocation.longitude,
+          OFFICE_COORDS.latitude, OFFICE_COORDS.longitude
+        );
+
+        setGeofenceInfo({
+          distance: Math.round(distance * 100) / 100,
+          isInOffice: distance <= OFFICE_COORDS.radius,
+          requiredRadius: OFFICE_COORDS.radius
+        });
+        setLocationLoading(false);
+      },
+      (error) => {
+        let errorMessage = 'Failed to get location';
+        if (error.code === error.PERMISSION_DENIED) errorMessage = 'Please enable location access';
+        setLocationError(errorMessage);
+        setLocationLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  // Handle clock in
   const handleClockIn = async () => {
     setLoading(true);
-    setMessage({ type: '', text: '' });
-
     try {
-      if (!location) {
-        throw new Error('Unable to get your location');
-      }
-
-      if (!geofenceInfo.isInOffice) {
-        throw new Error(
-          `You must be within ${OFFICE_COORDS.radius} meters of the office to clock in. ` +
-          `You are currently ${geofenceInfo.distance} meters away.`
-        );
+      if (!location) throw new Error('Unable to get location');
+      if (!geofenceInfo?.isInOffice) {
+        throw new Error(`Must be within ${OFFICE_COORDS.radius}m of office. Currently ${geofenceInfo.distance}m away.`);
       }
 
       const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_IN, {
@@ -590,57 +673,38 @@ const Attendance = () => {
 
       console.log('✅ Clock-in response:', response.data);
 
-      setMessage({
-        type: 'success',
-        text: response.data.message
-      });
-
+      setMessage({ type: 'success', text: response.data.message });
+      
+      // Set attendance with late info
       const newAttendance = {
         clock_in: response.data.clock_in,
-        late_minutes: response.data.late_minutes,
-        late_display: response.data.late_display,
-        status: response.data.status
+        late_minutes: response.data.late_minutes || 0,
+        late_display: response.data.late_display || formatLateTime(response.data.late_minutes),
+        status: response.data.status,
+        attendance_date: new Date().toISOString().split('T')[0]
       };
-
       setAttendance(newAttendance);
 
-      const session = {
-        session_id: response.data.session_id,
-        clock_in_time: response.data.clock_in
-      };
+      const session = { session_id: response.data.session_id, clock_in_time: response.data.clock_in };
       setActiveSession(session);
       saveSessionToStorage(session);
       setHasClockedOutToday(false);
 
-      // Refresh data
       await fetchTodayAttendance();
       await fetchAttendanceHistory();
-
     } catch (error) {
-      console.error('Clock-in error:', error);
-      setMessage({
-        type: 'danger',
-        text: error.response?.data?.message || error.message || 'Failed to clock in'
-      });
+      setMessage({ type: 'danger', text: error.response?.data?.message || error.message });
     } finally {
       setLoading(false);
     }
   };
 
+  // Handle clock out
   const handleClockOut = async () => {
     setLoading(true);
-    setMessage({ type: '', text: '' });
-
     try {
-      if (!activeSession) {
-        const storedSession = loadSessionFromStorage();
-        if (!storedSession) {
-          throw new Error('No active session found. Please clock in first.');
-        }
-        setActiveSession(storedSession);
-      }
-
       const sessionToUse = activeSession || loadSessionFromStorage();
+      if (!sessionToUse) throw new Error('No active session found');
 
       const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_OUT, {
         employee_id: user.employeeId,
@@ -650,55 +714,41 @@ const Attendance = () => {
         accuracy: location?.accuracy
       });
 
-      console.log('✅ Clock-out response:', response.data);
-
-      setMessage({
-        type: 'success',
-        text: response.data.message
-      });
-
-      // Update attendance with clock-out info
+      setMessage({ type: 'success', text: response.data.message });
       setAttendance(prev => ({
         ...prev,
         clock_out: response.data.clock_out,
         total_hours: response.data.total_hours,
+        total_minutes: response.data.total_minutes,
+        total_hours_display: response.data.total_hours_display,
         status: response.data.status
       }));
-
       setActiveSession(null);
       clearSessionFromStorage();
       setHasClockedOutToday(true);
 
-      // Refresh data
       await fetchTodayAttendance();
       await fetchAttendanceHistory();
-
     } catch (error) {
-      console.error('Clock-out error:', error);
-
       if (error.response?.data?.error_type === 'NO_ACTIVE_SESSION') {
         setActiveSession(null);
         clearSessionFromStorage();
-        setMessage({
-          type: 'warning',
-          text: 'Your session has expired. Please clock in again.'
-        });
+        setMessage({ type: 'warning', text: 'Session expired. Please clock in again.' });
       } else {
-        setMessage({
-          type: 'danger',
-          text: error.response?.data?.message || error.message || 'Failed to clock out'
-        });
+        setMessage({ type: 'danger', text: error.response?.data?.message || error.message });
       }
     } finally {
       setLoading(false);
     }
   };
 
+  // Handle manual clock out
   const handleManualClockOut = async () => {
     setShowExitWarning(false);
     await handleClockOut();
   };
 
+  // Get location badge
   const getLocationBadge = () => {
     if (locationLoading) {
       return (
@@ -723,7 +773,7 @@ const Attendance = () => {
         return (
           <Badge bg="success" className="px-3 py-2">
             <FaBuilding className="me-2" />
-            At Office ({geofenceInfo.distance}m from center)
+            At Office ({geofenceInfo.distance}m)
           </Badge>
         );
       } else {
@@ -744,124 +794,20 @@ const Attendance = () => {
     );
   };
 
-  const getAttendanceStatusBadge = (record) => {
-    if (record.isWeeklyOff) {
-      return <Badge bg="secondary" className="px-2 py-1"><FaMoon className="me-1" size={10} /> W-OFF</Badge>;
-    }
-
-    if (!record.clock_in) {
-      return <Badge bg="secondary" className="px-2 py-1"><FaClock className="me-1" size={10} /> Not Clocked</Badge>;
-    }
-
-    if (record.clock_in && !record.clock_out) {
-      if (record.late_minutes > 0) {
-        return (
-          <Badge bg="warning" className="text-dark px-2 py-1">
-            <FaClock className="me-1" size={10} />
-            Working (Late)
-          </Badge>
-        );
-      }
-      return <Badge bg="info" className="px-2 py-1"><FaClock className="me-1" size={10} /> Working</Badge>;
-    }
-
-    switch (record.status) {
-      case 'present':
-        if (record.late_minutes > 0) {
-          return (
-            <Badge bg="warning" className="text-dark px-2 py-1">
-              <FaCheckCircle className="me-1" size={10} />
-              Present (Late)
-            </Badge>
-          );
-        }
-        return <Badge bg="success" className="px-2 py-1"><FaCheckCircle className="me-1" size={10} /> Present</Badge>;
-      case 'half_day':
-        if (record.late_minutes > 0) {
-          return (
-            <Badge bg="warning" className="text-dark px-2 py-1">
-              <FaCloudSun className="me-1" size={10} />
-              Half Day (Late)
-            </Badge>
-          );
-        }
-        return <Badge bg="warning" className="text-dark px-2 py-1"><FaCloudSun className="me-1" size={10} /> Half Day</Badge>;
-      case 'on_leave':
-        return <Badge bg="info" className="px-2 py-1"><FaCloudSun className="me-1" size={10} /> Leave</Badge>;
-      case 'absent':
-        return <Badge bg="danger" className="px-2 py-1"><FaExclamationTriangle className="me-1" size={10} /> Absent</Badge>;
-      case 'working':
-        return <Badge bg="info" className="px-2 py-1"><FaClock className="me-1" size={10} /> Working</Badge>;
-      default:
-        return <Badge bg="secondary" className="px-2 py-1">Not Clocked</Badge>;
-    }
-  };
-
-  const formatLateTime = (lateMinutes) => {
-    if (!lateMinutes || lateMinutes <= 0) return null;
-
-    const totalSeconds = Math.round(lateMinutes * 60);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-
-    const parts = [];
-    if (hours > 0) parts.push(`${hours}h`);
-    if (minutes > 0) parts.push(`${minutes}m`);
-    if (seconds > 0 || (hours === 0 && minutes === 0)) parts.push(`${seconds}s`);
-
-    return parts.join(' ');
-  };
-
-  const formatTime = (datetime) => {
-    if (!datetime) return '--:--';
-    try {
-      const date = new Date(datetime);
-      if (isNaN(date.getTime())) return '--:--';
-      return date.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-      });
-    } catch (error) {
-      return '--:--';
-    }
-  };
-
-  const formatShortDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
+  // Render clock button
   const renderClockButton = () => {
     if (hasClockedOutToday && !activeSession) {
       return (
-        <Button
-          variant="secondary"
-          size="lg"
-          className="w-100 py-2"
-          disabled
-        >
+        <Button variant="secondary" size="lg" className="w-100 py-2" disabled>
           <FaSignOutAlt className="me-2" />
-          Clock Out (Completed for Today)
+          Clock Out (Completed)
         </Button>
       );
     }
 
     if (activeSession) {
       return (
-        <Button
-          variant="warning"
-          size="lg"
-          className="w-100 py-3"
-          onClick={handleClockOut}
-          disabled={loading}
-        >
+        <Button variant="warning" size="lg" className="w-100 py-3" onClick={handleClockOut} disabled={loading}>
           {loading ? (
             <>
               <Spinner size="sm" animation="border" className="me-2" />
@@ -878,13 +824,7 @@ const Attendance = () => {
     }
 
     return (
-      <Button
-        variant="success"
-        size="lg"
-        className="w-100 py-3"
-        onClick={handleClockIn}
-        disabled={loading || !geofenceInfo?.isInOffice || locationLoading}
-      >
+      <Button variant="success" size="lg" className="w-100 py-3" onClick={handleClockIn} disabled={loading || !geofenceInfo?.isInOffice || locationLoading}>
         {loading ? (
           <>
             <Spinner size="sm" animation="border" className="me-2" />
@@ -900,6 +840,55 @@ const Attendance = () => {
     );
   };
 
+  // Initial load effects
+  useEffect(() => {
+    if (!user?.employeeId) return;
+    const stored = loadSessionFromStorage();
+    if (stored) setActiveSession(stored);
+    fetchTodayAttendance();
+    getCurrentLocation();
+
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    const handleBeforeUnload = (e) => {
+      if (activeSession) {
+        e.preventDefault();
+        e.returnValue = 'You have an active session. Please clock out.';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      clearInterval(timer);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [user]);
+
+  // Fetch attendance history when user or attendance changes
+  useEffect(() => {
+    if (user?.employeeId) fetchAttendanceHistory();
+  }, [user?.employeeId, attendance]);
+
+  // Set up heartbeat interval
+  useEffect(() => {
+    if (activeSession && location) {
+      const interval = setInterval(sendHeartbeat, 30000);
+      setHeartbeatInterval(interval);
+      return () => clearInterval(interval);
+    }
+  }, [activeSession, location]);
+
+  // Debug effect to log attendance history late records
+  useEffect(() => {
+    const lateRecords = attendanceHistory.filter(r => r.late_minutes > 0);
+    if (lateRecords.length > 0) {
+      console.log('🔴 Late records in history:', lateRecords.map(r => ({
+        date: r.date,
+        late_display: r.late_display,
+        late_minutes: r.late_minutes
+      })));
+    }
+  }, [attendanceHistory]);
+
   return (
     <div className="p-2 p-md-3 p-lg-4" style={{ backgroundColor: '#f8f9fc', minHeight: '100vh' }}>
       <h5 className="mb-4 d-flex align-items-center">
@@ -907,7 +896,7 @@ const Attendance = () => {
         Attendance Management
       </h5>
 
-      {/* Current Status Card - Responsive */}
+      {/* Current Status Card */}
       <Card className="mb-4 border-0 shadow-sm">
         <Card.Body className="p-2 p-md-3">
           <Row className="align-items-center g-3">
@@ -937,8 +926,9 @@ const Attendance = () => {
                   <strong className={attendance?.clock_in ? 'text-success' : 'text-muted'}>
                     {attendance?.clock_in ? formatTime(attendance.clock_in) : '--:--'}
                   </strong>
-                  {attendance?.late_display && (
+                  {attendance?.late_display && attendance.late_minutes > 0 && (
                     <small className="text-danger d-block" style={{ fontSize: '10px' }}>
+                      <FaExclamationTriangle className="me-1" size={8} />
                       Late {attendance.late_display}
                     </small>
                   )}
@@ -948,9 +938,9 @@ const Attendance = () => {
                   <strong className={attendance?.clock_out ? 'text-warning' : 'text-muted'}>
                     {attendance?.clock_out ? formatTime(attendance.clock_out) : '--:--'}
                   </strong>
-                  {attendance?.total_hours && (
+                  {attendance?.total_hours_display && (
                     <small className="text-success d-block" style={{ fontSize: '10px' }}>
-                      {attendance.total_hours}h
+                      {attendance.total_hours_display}
                     </small>
                   )}
                 </Col>
@@ -1035,13 +1025,13 @@ const Attendance = () => {
                     attendance?.clock_out ? (
                       <Badge bg="success" className="px-3 py-2" style={{ fontSize: '0.85rem' }}>
                         <FaCheckCircle className="me-1" />
-                        Today: {formatTime(attendance.clock_in)} - {formatTime(attendance.clock_out)} ({attendance.total_hours}h)
+                        Today: {formatTime(attendance.clock_in)} - {formatTime(attendance.clock_out)} ({attendance.total_hours_display || attendance.total_hours + 'h'})
                       </Badge>
                     ) : (
                       <Badge bg="warning" className="px-3 py-2 text-dark" style={{ fontSize: '0.85rem' }}>
                         <FaClock className="me-1" />
                         Today: Working since {formatTime(attendance.clock_in)}
-                        {attendance?.late_display && (
+                        {attendance?.late_display && attendance.late_minutes > 0 && (
                           <small className="ms-1 text-danger">(Late {attendance.late_display})</small>
                         )}
                       </Badge>
@@ -1065,7 +1055,6 @@ const Attendance = () => {
               </div>
             </Card.Header>
             <Card.Body className="p-2 p-md-3">
-              {/* Fixed Tabs - Both tabs always visible */}
               <div className="mb-3 border-bottom">
                 <Button
                   variant={activeTab === 'daily' ? 'primary' : 'light'}
@@ -1095,7 +1084,7 @@ const Attendance = () => {
               {activeTab === 'daily' ? (
                 <>
                   <div className="table-responsive" style={{ maxHeight: '500px', overflowY: 'auto' }}>
-                    <Table hover size="sm" className="mb-0" style={{ tableLayout: 'fixed' }}>
+                    <Table hover size="sm" className="mb-0">
                       <thead className="bg-light sticky-top" style={{ top: 0, zIndex: 10 }}>
                         <tr>
                           <th style={{ width: '15%' }} className="small">Date</th>
@@ -1107,71 +1096,82 @@ const Attendance = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {attendanceHistory.map((record, index) => (
-                          <tr
-                            key={index}
-                            className={`
-                              ${record.isWeeklyOff ? 'bg-light' : ''} 
-                              ${record.isToday ? 'table-primary fw-bold' : ''}
-                            `}
-                          >
-                            <td className="small">
-                              <div>
-                                <span className="fw-semibold">{formatShortDate(record.date)}</span>
-                                {record.isToday && <Badge bg="primary" className="ms-1" pill>Today</Badge>}
-                              </div>
-                            </td>
-                            <td className="small d-none d-sm-table-cell">
-                              <div>
-                                {record.dayName}
-                                {record.isWeeklyOff && <Badge bg="secondary" className="ms-1" pill>OFF</Badge>}
-                              </div>
-                            </td>
-                            <td className="small">
-                              {record.isWeeklyOff ? (
-                                <span className="text-muted">---</span>
-                              ) : record.clock_in ? (
+                        {attendanceHistory.map((record, index) => {
+                          // Calculate late display for this record in Hours/Minutes/Seconds format
+                          const hasLate = record.late_minutes > 0;
+                          const lateDisplayText = hasLate ? (record.late_display || formatLateTime(record.late_minutes)) : null;
+                          
+                          return (
+                            <tr
+                              key={index}
+                              className={`
+                                ${record.isWeeklyOff ? 'bg-light' : ''} 
+                                ${record.isToday ? 'table-primary fw-bold' : ''}
+                                ${hasLate ? 'table-danger' : ''}
+                              `}
+                            >
+                              <td className="small">
                                 <div>
-                                  <span className="text-nowrap">{formatTime(record.clock_in)}</span>
-                                  {record.late_minutes > 0 && (
-                                    <small className="text-danger d-block" style={{ fontSize: '9px' }}>
-                                      Late {formatLateTime(record.late_minutes)}
-                                    </small>
-                                  )}
+                                  <span className="fw-semibold">{formatShortDate(record.date)}</span>
+                                  {record.isToday && <Badge bg="primary" className="ms-1" pill>Today</Badge>}
                                 </div>
-                              ) : (
-                                <span className="text-muted">---</span>
-                              )}
-                            </td>
-                            <td className="small">
-                              {record.isWeeklyOff ? (
-                                <span className="text-muted">---</span>
-                              ) : record.clock_out ? (
-                                <span className="text-nowrap">{formatTime(record.clock_out)}</span>
-                              ) : record.clock_in ? (
-                                <Badge bg="info" pill size="sm">Working</Badge>
-                              ) : (
-                                <span className="text-muted">---</span>
-                              )}
-                            </td>
-                            <td className="small fw-bold">
-                              {record.isWeeklyOff ? (
-                                <span className="text-muted">-</span>
-                              ) : record.total_hours ? (
-                                <span className="text-nowrap">{record.total_hours}h</span>
-                              ) : record.clock_in ? (
-                                <Badge bg="info" pill size="sm">Active</Badge>
-                              ) : (
-                                '-'
-                              )}
-                            </td>
-                            <td className="small">
-                              <div className="text-truncate" style={{ maxWidth: '100px' }}>
-                                {getAttendanceStatusBadge(record)}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td className="small d-none d-sm-table-cell">
+                                <div>
+                                  {record.dayName}
+                                  {record.isWeeklyOff && <Badge bg="secondary" className="ms-1" pill>OFF</Badge>}
+                                </div>
+                              </td>
+                              <td className="small">
+                                {record.isWeeklyOff ? (
+                                  <span className="text-muted">---</span>
+                                ) : record.clock_in ? (
+                                  <div>
+                                    <span className="text-nowrap">{formatTime(record.clock_in)}</span>
+                                    {/* Late mark shown below clock-in time in Hours/Minutes/Seconds format */}
+                                    {hasLate && lateDisplayText && (
+                                      <div className="text-danger small mt-1" style={{ fontSize: '11px', fontWeight: '500' }}>
+                                        <FaExclamationTriangle className="me-1" size={10} />
+                                        Late by {lateDisplayText}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted">---</span>
+                                )}
+                              </td>
+                              <td className="small">
+                                {record.isWeeklyOff ? (
+                                  <span className="text-muted">---</span>
+                                ) : record.clock_out ? (
+                                  <span className="text-nowrap">{formatTime(record.clock_out)}</span>
+                                ) : record.clock_in ? (
+                                  <Badge bg="info" pill size="sm">Working</Badge>
+                                ) : (
+                                  <span className="text-muted">---</span>
+                                )}
+                              </td>
+                              <td className="small fw-bold">
+                                {record.isWeeklyOff ? (
+                                  <span className="text-muted">-</span>
+                                ) : record.total_hours_display ? (
+                                  <span className="text-nowrap">{record.total_hours_display}</span>
+                                ) : record.total_hours ? (
+                                  <span className="text-nowrap">{record.total_hours}h</span>
+                                ) : record.clock_in ? (
+                                  <Badge bg="info" pill size="sm">Active</Badge>
+                                ) : (
+                                  '-'
+                                )}
+                              </td>
+                              <td className="small">
+                                <div className="text-truncate" style={{ maxWidth: '120px' }}>
+                                  {getAttendanceStatusBadge(record)}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </Table>
                   </div>
@@ -1189,9 +1189,7 @@ const Attendance = () => {
                         responsive: true,
                         maintainAspectRatio: false,
                         plugins: {
-                          legend: {
-                            display: false
-                          },
+                          legend: { display: false },
                           tooltip: {
                             callbacks: {
                               label: function (context) {
@@ -1232,7 +1230,7 @@ const Attendance = () => {
       </Row>
 
       {/* Exit Warning Modal */}
-      <Modal show={showExitWarning} onHide={() => setShowExitWarning(false)} centered dialogClassName="mx-2 mx-md-auto">
+      <Modal show={showExitWarning} onHide={() => setShowExitWarning(false)} centered>
         <Modal.Header closeButton className="bg-warning">
           <Modal.Title className="h6">⚠️ Active Session Detected</Modal.Title>
         </Modal.Header>

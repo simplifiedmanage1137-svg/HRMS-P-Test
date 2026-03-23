@@ -1,4 +1,3 @@
-// controllers/attendanceController.js
 const { v4: uuidv4 } = require('uuid');
 const supabase = require('../config/supabase');
 const { holidays } = require('../data/holidays');
@@ -8,40 +7,46 @@ const generateSessionId = () => {
     return uuidv4();
 };
 
+// Helper function to calculate time difference in minutes
+const calculateTimeDifferenceInMinutes = (date1, date2) => {
+    const diffMs = Math.abs(date2 - date1);
+    const diffMinutes = diffMs / (1000 * 60);
+    return diffMinutes;
+};
+
 // Helper function to parse time string (e.g., "3:00 PM" or "15:00")
 const parseTimeString = (timeStr) => {
     if (!timeStr) return null;
 
     console.log('Parsing time string:', timeStr);
-
-    const parts = timeStr.split('-');
-    let startTimeStr = timeStr;
-    if (parts.length > 0) {
-        startTimeStr = parts[0].trim();
-    }
-
-    let hour = 9, minute = 0;
-
-    const ampmMatch = startTimeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    
+    // Handle "3:00 PM" or "03:00 PM" format
+    const ampmMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     if (ampmMatch) {
-        hour = parseInt(ampmMatch[1]);
-        minute = parseInt(ampmMatch[2]);
+        let hour = parseInt(ampmMatch[1]);
+        const minute = parseInt(ampmMatch[2]);
         const ampm = ampmMatch[3].toUpperCase();
-
+        
+        console.log(`Found AMPM match - hour: ${hour}, minute: ${minute}, ampm: ${ampm}`);
+        
         if (ampm === 'PM' && hour !== 12) hour += 12;
         if (ampm === 'AM' && hour === 12) hour = 0;
-
+        
+        console.log(`Converted to 24h: ${hour}:${minute}`);
         return { hour, minute };
     }
-
-    const militaryMatch = startTimeStr.match(/(\d{1,2}):(\d{2})/);
+    
+    // Handle military time "15:00"
+    const militaryMatch = timeStr.match(/(\d{1,2}):(\d{2})/);
     if (militaryMatch) {
-        hour = parseInt(militaryMatch[1]);
-        minute = parseInt(militaryMatch[2]);
+        const hour = parseInt(militaryMatch[1]);
+        const minute = parseInt(militaryMatch[2]);
+        console.log(`Found military time: ${hour}:${minute}`);
         return { hour, minute };
     }
-
-    return { hour, minute };
+    
+    console.log('No time format matched, using default 9:00');
+    return { hour: 9, minute: 0 };
 };
 
 // Parse shift timing to get total hours
@@ -97,9 +102,14 @@ const parseShiftTiming = (shiftString) => {
         };
     }
 
-    let totalHours = endTime.hour - startTime.hour;
-    if (totalHours < 0) totalHours += 24;
-    totalHours += (endTime.minute - startTime.minute) / 60;
+    // Calculate exact total hours in minutes then convert
+    const startTotalMinutes = (startTime.hour * 60) + startTime.minute;
+    const endTotalMinutes = (endTime.hour * 60) + endTime.minute;
+    let totalMinutes = endTotalMinutes - startTotalMinutes;
+
+    if (totalMinutes < 0) totalMinutes += 24 * 60;
+
+    const totalHours = totalMinutes / 60;
 
     return {
         startHour: startTime.hour,
@@ -113,14 +123,11 @@ const parseShiftTiming = (shiftString) => {
 // Calculate overtime (only full hours count)
 const calculateOvertime = (totalHours, shiftHours) => {
     const standardShiftHours = shiftHours || 9;
-    
+
     // Only full hours above shift count as overtime
-    // If totalHours = 10.2, overtime = 1 hour (only full hour above 9)
-    // If totalHours = 10.8, overtime = 1 hour
-    // If totalHours = 11.0, overtime = 2 hours
     const overtimeHours = Math.floor(Math.max(0, totalHours - standardShiftHours));
     const overtimeMinutes = overtimeHours * 60;
-    
+
     return {
         overtimeHours,
         overtimeMinutes,
@@ -133,29 +140,74 @@ const calculateOvertime = (totalHours, shiftHours) => {
 const isHoliday = (date) => {
     const dateStr = date.toISOString().split('T')[0];
     const dayOfWeek = date.getDay();
-    
+
     if (dayOfWeek === 0 || dayOfWeek === 6) {
-        return { 
-            isHoliday: true, 
+        return {
+            isHoliday: true,
             type: 'weekly_off',
             name: dayOfWeek === 0 ? 'Sunday' : 'Saturday'
         };
     }
-    
+
     const holiday = holidays.find(h => h.date === dateStr);
     if (holiday) {
-        return { 
-            isHoliday: true, 
+        return {
+            isHoliday: true,
             type: 'public_holiday',
             name: holiday.name,
             region: holiday.region
         };
     }
-    
+
     return { isHoliday: false };
 };
 
-// Clock in
+// Calculate total working hours with exact minutes
+const calculateTotalWorkingHours = (clockInTime, clockOutTime) => {
+    if (!clockInTime || !clockOutTime) return 0;
+
+    const clockIn = new Date(clockInTime);
+    const clockOut = new Date(clockOutTime);
+
+    const diffMs = clockOut - clockIn;
+    const diffMinutes = diffMs / (1000 * 60);
+    const totalHours = diffMinutes / 60;
+
+    // Round to 2 decimal places for display
+    return Math.round(totalHours * 100) / 100;
+};
+
+// Format late time for display
+const formatLateTime = (lateMinutes) => {
+    if (!lateMinutes || lateMinutes <= 0) return null;
+
+    const totalMinutes = lateMinutes;
+    const hours = Math.floor(totalMinutes / 60);
+    const remainingMinutes = Math.floor(totalMinutes % 60);
+    const seconds = Math.round((totalMinutes - Math.floor(totalMinutes)) * 60);
+
+    if (hours > 0) {
+        if (remainingMinutes > 0 && seconds > 0) {
+            return `${hours}h ${remainingMinutes}m ${seconds}s`;
+        } else if (remainingMinutes > 0) {
+            return `${hours}h ${remainingMinutes}m`;
+        } else if (seconds > 0) {
+            return `${hours}h ${seconds}s`;
+        } else {
+            return `${hours}h`;
+        }
+    } else if (remainingMinutes > 0) {
+        if (seconds > 0) {
+            return `${remainingMinutes}m ${seconds}s`;
+        } else {
+            return `${remainingMinutes}m`;
+        }
+    } else {
+        return `${seconds}s`;
+    }
+};
+
+// Clock In function - FIXED
 exports.clockIn = async (req, res) => {
     try {
         console.log('='.repeat(70));
@@ -188,128 +240,228 @@ exports.clockIn = async (req, res) => {
         }
 
         const emp = employees[0];
+        
+        console.log('📋 Employee data:', {
+            employee_id: emp.employee_id,
+            first_name: emp.first_name,
+            last_name: emp.last_name,
+            shift_timing: emp.shift_timing,
+            shift_timing_type: typeof emp.shift_timing
+        });
+
+        // Get current time in LOCAL timezone
         const now = new Date();
 
+        // Get date components in LOCAL timezone
         const year = now.getFullYear();
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const day = String(now.getDate()).padStart(2, '0');
         const today = `${year}-${month}-${day}`;
 
-        const currentTimeStr = now.toTimeString().split(' ')[0];
+        const currentTimeStr = now.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+
         const sessionId = generateSessionId();
 
         console.log('Employee:', emp.first_name, emp.last_name);
         console.log('Today date (LOCAL):', today);
-        console.log('Clock in time:', now.toString());
+        console.log('Clock in time (LOCAL):', now.toString());
+        console.log('Clock in time (LOCAL formatted):', currentTimeStr);
 
         const holidayCheck = isHoliday(now);
         console.log('📅 Holiday check:', holidayCheck);
 
+        // ========== FIXED SHIFT TIMING PARSING ==========
         let shiftHour = 9, shiftMinute = 0;
         let shiftDisplay = emp.shift_timing || '9:00 AM';
-
+        
+        // Parse shift timing to get start time
         if (emp.shift_timing) {
-            const parsedTime = parseTimeString(emp.shift_timing);
-            if (parsedTime) {
-                shiftHour = parsedTime.hour;
-                shiftMinute = parsedTime.minute;
+            console.log('🔍 Parsing shift timing:', emp.shift_timing);
+            
+            // Try to extract the start time from shift_timing (format like "3:00 PM - 12:00 AM")
+            let startTimeStr = emp.shift_timing;
+            
+            // If it contains a dash, take the first part
+            if (startTimeStr.includes('-')) {
+                startTimeStr = startTimeStr.split('-')[0].trim();
+                console.log('📅 Extracted start time:', startTimeStr);
+            }
+            
+            // Parse the time string
+            const timeMatch = startTimeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+            if (timeMatch) {
+                let hour = parseInt(timeMatch[1]);
+                const minute = parseInt(timeMatch[2]);
+                const ampm = timeMatch[3].toUpperCase();
+                
+                console.log(`Found time match - hour: ${hour}, minute: ${minute}, ampm: ${ampm}`);
+                
+                if (ampm === 'PM' && hour !== 12) hour += 12;
+                if (ampm === 'AM' && hour === 12) hour = 0;
+                
+                shiftHour = hour;
+                shiftMinute = minute;
+                console.log(`✅ Parsed shift start: ${shiftHour}:${shiftMinute} (${shiftHour.toString().padStart(2, '0')}:${shiftMinute.toString().padStart(2, '0')})`);
+            } else {
+                // Try military time
+                const militaryMatch = startTimeStr.match(/(\d{1,2}):(\d{2})/);
+                if (militaryMatch) {
+                    shiftHour = parseInt(militaryMatch[1]);
+                    shiftMinute = parseInt(militaryMatch[2]);
+                    console.log(`✅ Parsed military shift start: ${shiftHour}:${shiftMinute}`);
+                } else {
+                    console.log(`⚠️ Could not parse shift timing: ${emp.shift_timing}, using default 9:00 AM`);
+                }
             }
         }
 
-        const shiftStartTime = new Date(now);
-        shiftStartTime.setHours(shiftHour, shiftMinute, 0, 0);
+        // Create shift start time for today using LOCAL time components
+        const shiftStartTime = new Date(year, now.getMonth(), now.getDate(), shiftHour, shiftMinute, 0, 0);
 
+        console.log(`⏰ Shift start time (LOCAL): ${shiftStartTime.toLocaleString()}`);
+        console.log(`⏰ Shift start time (ISO): ${shiftStartTime.toISOString()}`);
+        console.log(`⏰ Clock in time (LOCAL): ${now.toLocaleString()}`);
+        console.log(`⏰ Clock in time (ISO): ${now.toISOString()}`);
+        
+        // Calculate exact late minutes
         const diffMs = now - shiftStartTime;
         const isLate = diffMs > 0;
         const isEarly = diffMs < 0;
-        const lateMinutes = isLate ? diffMs / (1000 * 60) : 0;
-        const earlyMinutes = isEarly ? Math.abs(diffMs) / (1000 * 60) : 0;
+
+        // Calculate exact minutes
+        let lateMinutes = 0;
+        let earlyMinutes = 0;
+
+        if (isLate) {
+            lateMinutes = diffMs / (1000 * 60);
+            console.log(`❌ LATE DETECTED! Late by: ${lateMinutes} minutes`);
+            console.log(`   = ${Math.floor(lateMinutes)} minutes and ${Math.round((lateMinutes % 1) * 60)} seconds`);
+            console.log(`   Shift start: ${shiftStartTime.toLocaleTimeString()}`);
+            console.log(`   Clock in: ${now.toLocaleTimeString()}`);
+        } else if (isEarly) {
+            earlyMinutes = Math.abs(diffMs) / (1000 * 60);
+            console.log(`✅ EARLY: ${earlyMinutes} minutes early`);
+        } else {
+            console.log(`✅ ON TIME: Exactly at shift start`);
+        }
+
+        // Format late display for response
+        let lateDisplay = null;
+        if (isLate) {
+            const totalSeconds = Math.floor(lateMinutes * 60);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+
+            if (minutes === 0) {
+                lateDisplay = `${seconds}s`;
+            } else if (seconds === 0) {
+                lateDisplay = `${minutes}m`;
+            } else {
+                lateDisplay = `${minutes}m ${seconds}s`;
+            }
+            console.log(`📊 Late display formatted: ${lateDisplay}`);
+        }
+
+        // Round to 2 decimal places for storage
+        const lateMinutesToSave = isLate ? parseFloat(lateMinutes.toFixed(2)) : 0;
+        const earlyMinutesToSave = isEarly ? parseFloat(earlyMinutes.toFixed(2)) : 0;
+
+        console.log(`📊 FINAL VALUES TO SAVE:`);
+        console.log(`   isLate: ${isLate}`);
+        console.log(`   late_minutes: ${lateMinutesToSave}`);
+        console.log(`   late_display: ${lateDisplay}`);
+        console.log(`   shift_start: ${shiftHour}:${shiftMinute}`);
+        console.log(`   shift_display: ${shiftDisplay}`);
+        console.log(`   clock_in_time: ${currentTimeStr}`);
 
         try {
-            const { error: attendanceError } = await supabase
+            // First, check if there's already an attendance record for today
+            const { data: existingAttendance, error: checkError } = await supabase
                 .from('attendance')
-                .insert([{
-                    employee_id,
-                    attendance_date: today,
-                    clock_in: now.toISOString(),
-                    late_minutes: lateMinutes,
-                    early_minutes: earlyMinutes,
-                    latitude,
-                    longitude,
-                    location_accuracy: accuracy,
-                    session_id: sessionId,
-                    shift_time_used: shiftDisplay,
-                    is_holiday: holidayCheck.isHoliday,
-                    holiday_name: holidayCheck.name || null
-                }]);
-
-            if (attendanceError) throw attendanceError;
-
-            const { data: existingSession, error: checkError } = await supabase
-                .from('attendance_sessions')
                 .select('*')
-                .eq('session_id', sessionId);
+                .eq('employee_id', employee_id)
+                .eq('attendance_date', today)
+                .limit(1);
 
             if (checkError) throw checkError;
 
-            if (existingSession && existingSession.length === 0) {
-                const { error: sessionError } = await supabase
-                    .from('attendance_sessions')
-                    .insert([{
-                        employee_id,
-                        session_id: sessionId,
-                        clock_in_time: now.toISOString(),
-                        last_heartbeat: now.toISOString(),
-                        is_active: true,
-                        latitude,
-                        longitude,
-                        location_accuracy: accuracy
-                    }]);
-
-                if (sessionError) throw sessionError;
-            } else {
-                const { error: sessionError } = await supabase
-                    .from('attendance_sessions')
-                    .update({
-                        last_heartbeat: now.toISOString(),
-                        is_active: true,
-                        latitude,
-                        longitude,
-                        location_accuracy: accuracy
-                    })
-                    .eq('session_id', sessionId);
-
-                if (sessionError) throw sessionError;
+            if (existingAttendance && existingAttendance.length > 0) {
+                console.log('⚠️ Attendance record already exists for today!');
+                return res.status(400).json({
+                    success: false,
+                    message: 'You have already clocked in today'
+                });
             }
 
+            // Insert attendance record with exact late minutes
+            const attendanceData = {
+                employee_id,
+                attendance_date: today,
+                clock_in: now.toISOString(),
+                late_minutes: lateMinutesToSave,
+                early_minutes: earlyMinutesToSave,
+                latitude,
+                longitude,
+                location_accuracy: accuracy,
+                session_id: sessionId,
+                shift_time_used: shiftDisplay,
+                is_holiday: holidayCheck.isHoliday,
+                holiday_name: holidayCheck.name || null
+            };
+
+            console.log('📝 Inserting attendance with data:', JSON.stringify(attendanceData, null, 2));
+
+            const { error: attendanceError } = await supabase
+                .from('attendance')
+                .insert([attendanceData]);
+
+            if (attendanceError) {
+                console.error('❌ Attendance insert error:', attendanceError);
+                throw attendanceError;
+            }
+
+            console.log(`✅ Attendance record inserted successfully!`);
+            console.log(`   late_minutes: ${lateMinutesToSave}`);
+            console.log(`   late_display: ${lateDisplay}`);
+
+            // Create or update session
+            const { error: sessionError } = await supabase
+                .from('attendance_sessions')
+                .insert([{
+                    employee_id,
+                    session_id: sessionId,
+                    clock_in_time: now.toISOString(),
+                    last_heartbeat: now.toISOString(),
+                    is_active: true,
+                    latitude,
+                    longitude,
+                    location_accuracy: accuracy
+                }]);
+
+            if (sessionError) {
+                console.error('❌ Session insert error:', sessionError);
+                // Don't throw here, attendance is already recorded
+                console.log('⚠️ Session insert failed but attendance recorded');
+            }
+
+            // Format response message
             let status = 'On Time';
             let message = '✅ Clocked in on time';
-            let lateDisplay = null;
-            let earlyDisplay = null;
 
             if (isLate) {
                 status = 'Late';
-                const lateSeconds = Math.round(lateMinutes * 60);
-
-                if (lateSeconds < 60) {
-                    lateDisplay = `${lateSeconds} second${lateSeconds !== 1 ? 's' : ''}`;
-                } else {
-                    const minutes = Math.floor(lateSeconds / 60);
-                    const seconds = lateSeconds % 60;
-                    lateDisplay = seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-                }
                 message = `⚠️ Clocked in (${lateDisplay} late)`;
+                console.log(`⚠️ MARKED AS LATE: ${lateDisplay} (${lateMinutes} minutes)`);
             } else if (isEarly) {
                 status = 'Early';
-                const earlySeconds = Math.round(earlyMinutes * 60);
-
-                if (earlySeconds < 60) {
-                    earlyDisplay = `${earlySeconds} second${earlySeconds !== 1 ? 's' : ''}`;
-                } else {
-                    const minutes = Math.floor(earlySeconds / 60);
-                    const seconds = earlySeconds % 60;
-                    earlyDisplay = seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-                }
+                const totalSeconds = Math.floor(earlyMinutes * 60);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                const earlyDisplay = seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
                 message = `⏰ Clocked in (${earlyDisplay} early)`;
             }
 
@@ -323,6 +475,7 @@ exports.clockIn = async (req, res) => {
                 clock_in: now,
                 clock_in_time: currentTimeStr,
                 shift_time: shiftDisplay,
+                shift_start: `${shiftHour.toString().padStart(2, '0')}:${shiftMinute.toString().padStart(2, '0')}`,
                 status,
                 is_late: isLate,
                 is_early: isEarly,
@@ -334,15 +487,17 @@ exports.clockIn = async (req, res) => {
             };
 
             if (isLate) {
-                response.late_minutes = lateMinutes;
+                response.late_minutes = lateMinutesToSave;
                 response.late_display = lateDisplay;
             }
             if (isEarly) {
-                response.early_minutes = earlyMinutes;
+                response.early_minutes = earlyMinutesToSave;
                 response.early_display = earlyDisplay;
             }
 
-            console.log('✅ Response:', response.message, 'for date:', today);
+            console.log('✅ Clock-in Response:', JSON.stringify(response, null, 2));
+            console.log(`📊 Late minutes saved: ${lateMinutesToSave}, Display: ${lateDisplay}`);
+
             res.json(response);
 
         } catch (error) {
@@ -360,10 +515,7 @@ exports.clockIn = async (req, res) => {
     }
 };
 
-// Clock out with overtime calculation
-// In attendanceController.js - Update the clockOut function
-
-// Clock out with overtime calculation
+// Clock out with exact working hours calculation
 exports.clockOut = async (req, res) => {
     try {
         console.log('='.repeat(70));
@@ -390,7 +542,7 @@ exports.clockOut = async (req, res) => {
 
         const now = new Date();
         const today = now.toISOString().split('T')[0];
-        
+
         const holidayCheck = isHoliday(now);
 
         console.log(`🔍 Looking for active session: ${session_id} for employee: ${employee_id}`);
@@ -508,13 +660,19 @@ exports.clockOut = async (req, res) => {
             }
         }
 
-        // Calculate hours
+        // Calculate exact hours with minutes precision
         const clockIn = new Date(attendanceRecord.clock_in);
-        const totalMs = now - clockIn;
-        const totalHours = totalMs / (1000 * 60 * 60);
-        const totalHoursRounded = Math.round(totalHours * 100) / 100;
+        const totalMinutes = calculateTimeDifferenceInMinutes(clockIn, now);
+        const totalHours = totalMinutes / 60;
 
-        console.log(`📊 Hours calculated: ${totalHoursRounded}`);
+        // Round to 2 decimal places for accurate display
+        const totalHoursRounded = Math.round(totalHours * 100) / 100;
+        const totalMinutesRounded = Math.round(totalMinutes);
+
+        console.log(`📊 Hours calculated: ${totalHoursRounded} hours (${totalMinutesRounded} minutes)`);
+        console.log(`   Clock In: ${clockIn.toLocaleTimeString()}`);
+        console.log(`   Clock Out: ${now.toLocaleTimeString()}`);
+        console.log(`   Difference: ${Math.floor(totalMinutes / 60)}h ${Math.round(totalMinutes % 60)}m`);
 
         // Get employee shift timing to calculate overtime
         const { data: employee, error: empError } = await supabase
@@ -533,7 +691,7 @@ exports.clockOut = async (req, res) => {
 
         const overtime = calculateOvertime(totalHoursRounded, shiftHours);
 
-        console.log(`📊 Hours worked: ${totalHoursRounded}, Shift: ${shiftHours}h, Overtime: ${overtime.overtimeHours}h`);
+        console.log(`📊 Hours worked: ${totalHoursRounded}h, Shift: ${shiftHours}h, Overtime: ${overtime.overtimeHours}h`);
 
         let compOffAwarded = false;
         let compOffDays = 0;
@@ -542,9 +700,9 @@ exports.clockOut = async (req, res) => {
         if (holidayCheck.isHoliday && totalHoursRounded >= 8) {
             compOffAwarded = true;
             compOffDays = 1.0;
-            
+
             console.log(`🎉 Employee worked on ${holidayCheck.type}: ${holidayCheck.name}. Awarding ${compOffDays} comp-off day!`);
-            
+
             try {
                 // Insert into comp_off_earnings table
                 const { error: compOffError } = await supabase
@@ -603,20 +761,21 @@ exports.clockOut = async (req, res) => {
             }
         }
 
-        // Determine status
+        // Determine status based on total minutes (not rounded hours)
         let status = 'present';
-        if (totalHours < 4) {
+        if (totalMinutes < 240) { // Less than 4 hours
             status = 'absent';
-        } else if (totalHours < 8) {
+        } else if (totalMinutes < 480) { // Less than 8 hours but >= 4 hours
             status = 'half_day';
         }
 
-        console.log(`📊 Status: ${status}`);
+        console.log(`📊 Status: ${status} (based on ${totalMinutes} minutes)`);
 
-        // Prepare update data
+        // Prepare update data with exact minutes
         const updateData = {
             clock_out: now.toISOString(),
             total_hours: totalHoursRounded,
+            total_minutes: totalMinutesRounded,
             status: status,
             latitude: latitude || attendanceRecord.latitude,
             longitude: longitude || attendanceRecord.longitude,
@@ -630,7 +789,10 @@ exports.clockOut = async (req, res) => {
             overtime_amount: overtime.overtimeAmount || 0
         };
 
-        console.log('📝 Updating attendance with:', updateData);
+        console.log('📝 Updating attendance with:', {
+            ...updateData,
+            total_hours_display: `${Math.floor(totalMinutes / 60)}h ${Math.round(totalMinutes % 60)}m`
+        });
 
         // Update attendance record
         const { error: updateAttendanceError } = await supabase
@@ -659,13 +821,16 @@ exports.clockOut = async (req, res) => {
 
         console.log('✅ Clock-out successful');
 
+        // Format total hours for display
+        const totalHoursDisplay = `${Math.floor(totalMinutes / 60)}h ${Math.round(totalMinutes % 60)}m`;
+
         let message = '';
         if (compOffAwarded) {
-            message = `✅ Clocked out successfully! 🎉 You earned ${compOffDays} Comp-Off day for working on ${holidayCheck.name || holidayCheck.type}!`;
+            message = `✅ Clocked out successfully! 🎉 You earned ${compOffDays} Comp-Off day for working on ${holidayCheck.name || holidayCheck.type}! Total hours: ${totalHoursDisplay}`;
         } else if (overtime.hasOvertime) {
-            message = `✅ Clocked out successfully! You worked ${overtime.overtimeHours} hour(s) overtime! (₹${overtime.overtimeAmount})`;
+            message = `✅ Clocked out successfully! Total hours: ${totalHoursDisplay} (${overtime.overtimeHours} hour(s) overtime! ₹${overtime.overtimeAmount})`;
         } else {
-            message = `✅ Clocked out successfully. ${status === 'present' ? 'Full day' : status === 'half_day' ? 'Half day' : 'Absent'}`;
+            message = `✅ Clocked out successfully. Total hours: ${totalHoursDisplay} (${status === 'present' ? 'Full day' : status === 'half_day' ? 'Half day' : 'Absent'})`;
         }
 
         res.json({
@@ -673,6 +838,8 @@ exports.clockOut = async (req, res) => {
             message,
             clock_out: now,
             total_hours: totalHoursRounded,
+            total_minutes: totalMinutesRounded,
+            total_hours_display: totalHoursDisplay,
             status,
             session_id: session.session_id,
             comp_off_awarded: compOffAwarded,
@@ -701,11 +868,11 @@ exports.clockOut = async (req, res) => {
     }
 };
 
-// Get today's attendance
+// Get today's attendance - UPDATED with proper late display
 exports.getTodayAttendance = async (req, res) => {
     try {
         const { employee_id } = req.params;
-        
+
         console.log('📊 getTodayAttendance called with employee_id:', employee_id);
 
         if (!employee_id) {
@@ -755,6 +922,17 @@ exports.getTodayAttendance = async (req, res) => {
         if (attendanceError) throw attendanceError;
 
         console.log('📊 Today attendance records found:', todayAttendance?.length || 0);
+        
+        // Log the raw data from database to debug
+        if (todayAttendance && todayAttendance.length > 0) {
+            console.log('📊 RAW attendance record:', {
+                id: todayAttendance[0].id,
+                late_minutes: todayAttendance[0].late_minutes,
+                clock_in: todayAttendance[0].clock_in,
+                clock_out: todayAttendance[0].clock_out,
+                attendance_date: todayAttendance[0].attendance_date
+            });
+        }
 
         const { data: activeSession, error: sessionError } = await supabase
             .from('attendance_sessions')
@@ -763,14 +941,14 @@ exports.getTodayAttendance = async (req, res) => {
             .eq('is_active', true);
 
         if (sessionError) throw sessionError;
-        
+
         console.log('📊 Active session found:', activeSession?.length || 0);
 
         let formattedAttendance = null;
-        
+
         if (todayAttendance && todayAttendance.length > 0) {
             formattedAttendance = { ...todayAttendance[0] };
-            
+
             if (formattedAttendance.employees) {
                 formattedAttendance.first_name = formattedAttendance.employees.first_name;
                 formattedAttendance.last_name = formattedAttendance.employees.last_name;
@@ -778,28 +956,70 @@ exports.getTodayAttendance = async (req, res) => {
                 formattedAttendance.comp_off_balance = formattedAttendance.employees.comp_off_balance;
                 delete formattedAttendance.employees;
             }
+
+            // Format late minutes for display
+            const rawLateMinutes = formattedAttendance.late_minutes;
+            console.log(`📊 Raw late_minutes from DB: ${rawLateMinutes} (type: ${typeof rawLateMinutes})`);
             
-            if (formattedAttendance.late_minutes && formattedAttendance.late_minutes > 0) {
-                const lateSeconds = Math.round(formattedAttendance.late_minutes * 60);
-                formattedAttendance.late_display = lateSeconds < 60 ?
-                    `${lateSeconds}s` :
-                    `${Math.floor(lateSeconds / 60)}m ${lateSeconds % 60}s`;
+            // Set late display if there are late minutes
+            if (rawLateMinutes && parseFloat(rawLateMinutes) > 0) {
+                formattedAttendance.late_display = formatLateTime(rawLateMinutes);
+                formattedAttendance.late_minutes = parseFloat(rawLateMinutes);
+                console.log(`✅ Set late_display: ${formattedAttendance.late_display} for ${rawLateMinutes} minutes`);
+            } else {
+                formattedAttendance.late_display = null;
+                formattedAttendance.late_minutes = 0;
+                console.log(`✅ No late minutes (${rawLateMinutes})`);
             }
-            
+
+            // Format early minutes if any
+            if (formattedAttendance.early_minutes && formattedAttendance.early_minutes > 0) {
+                const totalSeconds = Math.round(formattedAttendance.early_minutes * 60);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+
+                if (minutes === 0) {
+                    formattedAttendance.early_display = `Early ${seconds}s`;
+                } else if (seconds === 0) {
+                    formattedAttendance.early_display = `Early ${minutes}m`;
+                } else {
+                    formattedAttendance.early_display = `Early ${minutes}m ${seconds}s`;
+                }
+            }
+
+            // Calculate current working hours if still working
             if (formattedAttendance.clock_in && !formattedAttendance.clock_out) {
                 const clockIn = new Date(formattedAttendance.clock_in);
                 const now = new Date();
-                const currentHours = (now - clockIn) / (1000 * 60 * 60);
-                formattedAttendance.current_hours = currentHours.toFixed(2);
+                const currentMinutes = (now - clockIn) / (1000 * 60);
+                const currentHours = currentMinutes / 60;
+                formattedAttendance.current_hours = Math.round(currentHours * 100) / 100;
+
+                const hours = Math.floor(currentMinutes / 60);
+                const minutes = Math.round(currentMinutes % 60);
+                formattedAttendance.current_hours_display = `${hours}h ${minutes}m`;
+                formattedAttendance.total_hours_display = `${hours}h ${minutes}m`;
+            } else if (formattedAttendance.total_minutes && formattedAttendance.total_minutes > 0) {
+                const minutes = formattedAttendance.total_minutes;
+                const hours = Math.floor(minutes / 60);
+                const mins = Math.round(minutes % 60);
+                formattedAttendance.total_hours_display = `${hours}h ${mins}m`;
+            } else if (formattedAttendance.total_hours && formattedAttendance.total_hours > 0) {
+                const totalHours = formattedAttendance.total_hours;
+                const totalMinutes = totalHours * 60;
+                const hours = Math.floor(totalMinutes / 60);
+                const mins = Math.round(totalMinutes % 60);
+                formattedAttendance.total_hours_display = `${hours}h ${mins}m`;
             }
-            
+
             console.log('📊 Today\'s attendance:', {
                 date: formattedAttendance.attendance_date,
-                clock_in: formattedAttendance.clock_in ? 'Yes' : 'No',
-                clock_out: formattedAttendance.clock_out ? 'Yes' : 'No',
+                clock_in: formattedAttendance.clock_in ? new Date(formattedAttendance.clock_in).toLocaleTimeString() : 'No',
+                clock_out: formattedAttendance.clock_out ? new Date(formattedAttendance.clock_out).toLocaleTimeString() : 'No',
+                total_hours: formattedAttendance.total_hours_display || 'N/A',
                 is_holiday: formattedAttendance.is_holiday,
-                comp_off_awarded: formattedAttendance.comp_off_awarded,
-                overtime_hours: formattedAttendance.overtime_hours
+                late_display: formattedAttendance.late_display,
+                late_minutes: formattedAttendance.late_minutes
             });
         }
 
@@ -818,22 +1038,22 @@ exports.getTodayAttendance = async (req, res) => {
         console.error('❌ Error in getTodayAttendance:', error);
         console.error('❌ Error stack:', error.stack);
         console.error('❌ Error message:', error.message);
-        
-        res.status(500).json({ 
-            success: false, 
+
+        res.status(500).json({
+            success: false,
             message: 'Failed to get attendance',
             error: error.message
         });
     }
 };
 
-// Get attendance report with overtime
+// Get attendance report with exact time calculations - UPDATED
 exports.getAttendanceReport = async (req, res) => {
     try {
         const { start, end, employee_id } = req.query;
-        
+
         console.log('📊 Getting attendance report from', start, 'to', end, 'for employee:', employee_id);
-        
+
         if (!start || !end) {
             console.log('❌ Missing start or end date');
             return res.status(400).json({
@@ -874,7 +1094,26 @@ exports.getAttendanceReport = async (req, res) => {
 
         const formattedAttendance = (attendance || []).map(record => {
             const employee = record.employees || {};
-            
+
+            // Format total hours display
+            let totalHoursDisplay = '0h 0m';
+            if (record.total_minutes) {
+                totalHoursDisplay = `${Math.floor(record.total_minutes / 60)}h ${Math.round(record.total_minutes % 60)}m`;
+            } else if (record.total_hours) {
+                const totalMinutes = record.total_hours * 60;
+                totalHoursDisplay = `${Math.floor(totalMinutes / 60)}h ${Math.round(totalMinutes % 60)}m`;
+            }
+
+            // Format late minutes display
+            let lateDisplay = null;
+            let formattedLateMinutes = null;
+
+            if (record.late_minutes && record.late_minutes > 0) {
+                formattedLateMinutes = parseFloat(record.late_minutes);
+                lateDisplay = formatLateTime(formattedLateMinutes);
+                console.log(`📊 Record for ${record.attendance_date}: late_minutes=${formattedLateMinutes}, late_display=${lateDisplay}`);
+            }
+
             return {
                 id: record.id,
                 employee_id: record.employee_id,
@@ -882,8 +1121,11 @@ exports.getAttendanceReport = async (req, res) => {
                 clock_in: record.clock_in,
                 clock_out: record.clock_out,
                 total_hours: record.total_hours,
+                total_minutes: record.total_minutes,
+                total_hours_display: totalHoursDisplay,
                 status: record.status,
-                late_minutes: record.late_minutes,
+                late_minutes: formattedLateMinutes,
+                late_display: lateDisplay,
                 early_minutes: record.early_minutes,
                 shift_time_used: record.shift_time_used,
                 is_holiday: record.is_holiday,
@@ -902,6 +1144,25 @@ exports.getAttendanceReport = async (req, res) => {
             };
         });
 
+        // Log records with late marks for debugging
+        const lateRecords = formattedAttendance.filter(a => a.late_minutes > 0);
+        console.log(`📊 Records with late marks: ${lateRecords.length}`);
+        lateRecords.forEach(record => {
+            console.log(`   ${record.attendance_date}: ${record.late_display} (${record.late_minutes} minutes)`);
+        });
+
+        // Calculate stats with exact minutes
+        let totalWorkingMinutes = 0;
+        formattedAttendance.forEach(a => {
+            if (a.total_minutes) {
+                totalWorkingMinutes += a.total_minutes;
+            } else if (a.total_hours) {
+                totalWorkingMinutes += a.total_hours * 60;
+            }
+        });
+
+        const totalWorkingHours = totalWorkingMinutes / 60;
+
         res.json({
             success: true,
             attendance: formattedAttendance,
@@ -912,16 +1173,19 @@ exports.getAttendanceReport = async (req, res) => {
                 absent: formattedAttendance.filter(a => a.status === 'absent').length,
                 comp_off_earned: formattedAttendance.filter(a => a.comp_off_awarded).length,
                 total_overtime_hours: formattedAttendance.reduce((sum, a) => sum + (a.overtime_hours || 0), 0),
-                total_overtime_amount: formattedAttendance.reduce((sum, a) => sum + (a.overtime_amount || 0), 0)
+                total_overtime_amount: formattedAttendance.reduce((sum, a) => sum + (a.overtime_amount || 0), 0),
+                total_working_minutes: totalWorkingMinutes,
+                total_working_hours: Math.round(totalWorkingHours * 100) / 100,
+                total_working_hours_display: `${Math.floor(totalWorkingMinutes / 60)}h ${Math.round(totalWorkingMinutes % 60)}m`
             }
         });
 
     } catch (error) {
         console.error('❌ Error in getAttendanceReport:', error);
         console.error('❌ Error details:', error);
-        
-        res.status(500).json({ 
-            success: false, 
+
+        res.status(500).json({
+            success: false,
             message: 'Failed to get attendance report',
             error: error.message,
             details: error.details || error.hint
@@ -1036,19 +1300,21 @@ exports.markAbsentAtDayEnd = async () => {
             }
             else if (attendance[0].clock_in && !attendance[0].clock_out) {
                 const clockIn = new Date(attendance[0].clock_in);
-                const totalHours = (now - clockIn) / (1000 * 60 * 60);
-                
+                const totalMinutes = calculateTimeDifferenceInMinutes(clockIn, now);
+                const totalHours = totalMinutes / 60;
+
                 const { error: updateError } = await supabase
                     .from('attendance')
                     .update({
                         status: 'half_day',
-                        total_hours: totalHours
+                        total_hours: totalHours,
+                        total_minutes: totalMinutes
                     })
                     .eq('id', attendance[0].id);
 
                 if (updateError) throw updateError;
                 updatedCount++;
-                console.log(`⚠️ Auto-marked half_day for employee ${emp.employee_id} (forgot to clock out)`);
+                console.log(`⚠️ Auto-marked half_day for employee ${emp.employee_id} (forgot to clock out) - ${Math.floor(totalMinutes / 60)}h ${Math.round(totalMinutes % 60)}m`);
             }
         }
 
@@ -1065,7 +1331,7 @@ exports.markAbsentAtDayEnd = async () => {
 exports.getCompOffBalance = async (req, res) => {
     try {
         const { employee_id } = req.params;
-        
+
         const { data, error } = await supabase
             .from('employees')
             .select('comp_off_balance, total_comp_off_earned, total_comp_off_used')
@@ -1095,7 +1361,7 @@ exports.getCompOffBalance = async (req, res) => {
 exports.getCompOffHistory = async (req, res) => {
     try {
         const { employee_id } = req.params;
-        
+
         const { data, error } = await supabase
             .from('comp_off_earnings')
             .select('*')
@@ -1123,10 +1389,10 @@ exports.getCompOffHistory = async (req, res) => {
 exports.getOvertimeSummary = async (req, res) => {
     try {
         const { employee_id, month, year } = req.params;
-        
+
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0);
-        
+
         const startDateStr = startDate.toISOString().split('T')[0];
         const endDateStr = endDate.toISOString().split('T')[0];
 
@@ -1154,6 +1420,7 @@ exports.getOvertimeSummary = async (req, res) => {
                 total_days: overtime?.length || 0,
                 total_minutes: totalMinutes,
                 total_hours: totalHours,
+                total_hours_display: `${Math.floor(totalMinutes / 60)}h ${Math.round(totalMinutes % 60)}m`,
                 total_amount: totalAmount,
                 average_per_day: overtime?.length > 0 ? (totalHours / overtime.length).toFixed(2) : 0
             }
@@ -1168,3 +1435,5 @@ exports.getOvertimeSummary = async (req, res) => {
         });
     }
 };
+
+module.exports = exports;
