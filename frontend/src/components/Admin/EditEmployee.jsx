@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Form, Button, Card, Row, Col, Spinner, Alert, Modal, Table, Badge, ProgressBar } from 'react-bootstrap';
-import { FaSave, FaArrowLeft, FaFileAlt, FaFileImage, FaFilePdf, FaDownload, FaEye, FaUpload, FaTrash, FaPlus } from 'react-icons/fa';
+import { FaSave, FaArrowLeft, FaFileAlt, FaFileImage, FaFilePdf, FaDownload, FaEye, FaUpload, FaTrash, FaPlus, FaSync } from 'react-icons/fa';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
 import { useNotification } from '../../context/NotificationContext';
@@ -56,6 +56,7 @@ const EditEmployee = () => {
     const [showDocumentModal, setShowDocumentModal] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [lastUpdateTimestamp, setLastUpdateTimestamp] = useState(Date.now()); // ✅ Added this state
 
     // New document upload states
     const [selectedFiles, setSelectedFiles] = useState([]);
@@ -104,7 +105,7 @@ const EditEmployee = () => {
 
             // After getting employee details, fetch documents
             if (employee.employee_id) {
-                fetchEmployeeDocuments(employee.employee_id);
+                await fetchEmployeeDocuments(employee.employee_id);
             } else {
                 console.error('Employee ID not found in response');
             }
@@ -118,17 +119,18 @@ const EditEmployee = () => {
         }
     };
 
-    // Updated fetchEmployeeDocuments with better debugging
     const fetchEmployeeDocuments = async (employeeId) => {
         try {
             setDocLoading(true);
             console.log('📄 Fetching documents for employee ID:', employeeId);
-
-            const response = await axios.get(API_ENDPOINTS.EMPLOYEE_DOCUMENTS(employeeId));
+            
+            // Add cache-busting timestamp
+            const timestamp = Date.now();
+            const response = await axios.get(`${API_ENDPOINTS.EMPLOYEE_DOCUMENTS(employeeId)}?_=${timestamp}`);
             console.log('✅ Documents response:', response.data);
-
+            
             // Process documents - filter out null/empty values
-            const docs = Object.entries(response.data)
+            const docs = Object.entries(response.data || {})
                 .filter(([key, value]) => value && value !== 'null' && value !== '')
                 .map(([key, value]) => ({
                     type: key,
@@ -136,13 +138,17 @@ const EditEmployee = () => {
                     displayName: formatDocumentName(key),
                     icon: getDocumentIcon(key, value)
                 }));
-
+            
             console.log('📊 Processed documents:', docs);
             setEmployeeDocuments(docs);
-
+            
+            // Update timestamp to force re-render if needed
+            setLastUpdateTimestamp(Date.now());
+            
         } catch (error) {
             console.error('❌ Error fetching documents:', error);
             setEmployeeDocuments([]);
+            // Don't show notification for this error to avoid spam
         } finally {
             setDocLoading(false);
         }
@@ -180,7 +186,9 @@ const EditEmployee = () => {
     };
 
     const handleViewDocument = (doc) => {
-        window.open(`${API_ENDPOINTS.EMPLOYEE_DOCUMENT_BY_TYPE(formData.employee_id, doc.type)}?inline=true`, '_blank');
+        const url = `${API_ENDPOINTS.EMPLOYEE_DOCUMENT_BY_TYPE(formData.employee_id, doc.type)}?inline=true&_=${Date.now()}`;
+        console.log('🔍 Opening document URL:', url);
+        window.open(url, '_blank');
     };
 
     const handleDownloadDocument = async (doc) => {
@@ -244,7 +252,6 @@ const EditEmployee = () => {
         setSelectedDocTypes(newTypes);
     };
 
-    // Updated uploadDocuments function with refresh
     const uploadDocuments = async () => {
         const validUploads = selectedFiles.reduce((acc, file, index) => {
             if (file && selectedDocTypes[index]) {
@@ -264,19 +271,15 @@ const EditEmployee = () => {
         setUploading(true);
         let successCount = 0;
         let failCount = 0;
-        let uploadedTypes = [];
 
         for (let i = 0; i < validUploads.length; i++) {
             const upload = validUploads[i];
-
-            // Create a new FormData object for each file
             const formDataObj = new FormData();
             formDataObj.append(upload.type, upload.file);
 
             try {
                 setUploadProgress(Math.round(((i + 1) / validUploads.length) * 100));
 
-                // Use formData.employee_id from state
                 if (!formData.employee_id) {
                     console.error('Employee ID not found in form data');
                     failCount++;
@@ -295,7 +298,7 @@ const EditEmployee = () => {
 
                 console.log('Upload response:', response.data);
                 successCount++;
-                uploadedTypes.push(upload.type);
+
             } catch (error) {
                 console.error(`❌ Error uploading ${upload.type}:`, error);
                 console.error('Error details:', error.response?.data);
@@ -305,26 +308,30 @@ const EditEmployee = () => {
 
         if (successCount > 0) {
             showNotification(`${successCount} document(s) uploaded successfully!`, 'success');
-            
-            // 👇 IMPORTANT: Refresh documents list after successful upload
-            console.log('🔄 Refreshing documents list...');
+
+            // Wait a moment for the server to process
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Refresh documents list with fresh data
+            console.log('🔄 Refreshing documents list after upload...');
             await fetchEmployeeDocuments(formData.employee_id);
-            
+
             // Close the upload modal
             setShowUploadModal(false);
+
+            // Clear selected files
+            setSelectedFiles([]);
+            setSelectedDocTypes([]);
         }
-        
+
         if (failCount > 0) {
             showNotification(`${failCount} document(s) failed to upload`, 'danger');
         }
 
         setUploading(false);
-        setSelectedFiles([]);
-        setSelectedDocTypes([]);
         setUploadProgress(0);
     };
 
-    // Updated handleDeleteDocument with refresh
     const handleDeleteDocument = async (doc) => {
         if (!window.confirm(`Are you sure you want to delete ${doc.displayName}?`)) {
             return;
@@ -333,10 +340,13 @@ const EditEmployee = () => {
         try {
             await axios.delete(API_ENDPOINTS.EMPLOYEE_DOCUMENT_DELETE(formData.employee_id, doc.type));
             showNotification('Document deleted successfully!', 'success');
-            
-            // 👇 Refresh documents list after deletion
+
+            // Wait a moment for the server to process
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Refresh documents list after deletion
             await fetchEmployeeDocuments(formData.employee_id);
-            
+
         } catch (error) {
             console.error('Error deleting document:', error);
             showNotification(error.response?.data?.message || 'Failed to delete document', 'danger');
@@ -358,17 +368,37 @@ const EditEmployee = () => {
         setSuccess('');
 
         try {
-            await axios.put(API_ENDPOINTS.EMPLOYEE_BY_ID(id), formData);
+            console.log('📤 Sending update for employee ID:', id);
+            console.log('📤 Update data:', formData);
+
+            // Filter out fields that might not be in the database
+            const updateData = { ...formData };
+
+            // Remove fields that shouldn't be updated or don't exist
+            delete updateData.id;
+            delete updateData.employee_id;
+            delete updateData.created_at;
+
+            // Convert empty strings to null for optional fields
+            Object.keys(updateData).forEach(key => {
+                if (updateData[key] === '') {
+                    updateData[key] = null;
+                }
+            });
+
+            const response = await axios.put(API_ENDPOINTS.EMPLOYEE_BY_ID(id), updateData);
+            console.log('✅ Update response:', response.data);
+
             setSuccess('Employee updated successfully!');
             showNotification('Employee updated successfully!', 'success');
 
-            // Redirect after 2 seconds
             setTimeout(() => {
                 navigate('/admin/employees');
             }, 2000);
 
         } catch (error) {
-            console.error('Error updating employee:', error);
+            console.error('❌ Error updating employee:', error);
+            console.error('Error response:', error.response?.data);
             setError(error.response?.data?.message || 'Failed to update employee');
             showNotification(error.response?.data?.message || 'Failed to update employee', 'danger');
         } finally {
@@ -389,7 +419,7 @@ const EditEmployee = () => {
 
     return (
         <div className="container-fluid p-2 p-md-3 p-lg-4">
-            {/* Header - Responsive */}
+            {/* Header */}
             <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-4 gap-3">
                 <div className="d-flex flex-wrap align-items-center gap-2">
                     <Button
@@ -430,6 +460,7 @@ const EditEmployee = () => {
                         <h6 className="mb-0">Personal Information</h6>
                     </Card.Header>
                     <Card.Body className="p-2 p-md-3">
+                        {/* ... keep your existing form fields ... */}
                         <Row className="g-2 g-md-3 mb-3">
                             <Col xs={12} md={4}>
                                 <Form.Group>
@@ -836,11 +867,20 @@ const EditEmployee = () => {
                     </Card.Body>
                 </Card>
 
-                {/* Documents Section with Upload - Responsive */}
+                {/* Documents Section with Upload - Updated with Refresh Button */}
                 <Card className="shadow-sm mb-4">
                     <Card.Header className="bg-light py-2 py-md-3 d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
                         <h6 className="mb-0">Employee Documents</h6>
                         <div className="d-flex flex-wrap gap-2">
+                            <Button
+                                variant="outline-secondary"
+                                size="sm"
+                                onClick={() => fetchEmployeeDocuments(formData.employee_id)}
+                                className="d-inline-flex align-items-center"
+                                title="Refresh Documents"
+                            >
+                                <FaSync className="me-2" /> <span className="d-none d-sm-inline">Refresh</span>
+                            </Button>
                             <Button
                                 variant="success"
                                 size="sm"
@@ -934,7 +974,7 @@ const EditEmployee = () => {
                     </Card.Body>
                 </Card>
 
-                {/* Submit Button - Responsive */}
+                {/* Submit Button */}
                 <div className="text-center text-md-end mt-4">
                     <Button
                         type="submit"
@@ -958,7 +998,7 @@ const EditEmployee = () => {
                 </div>
             </Form>
 
-            {/* Upload Documents Modal - Responsive */}
+            {/* Upload Documents Modal */}
             <Modal show={showUploadModal} onHide={() => setShowUploadModal(false)} size="lg" centered dialogClassName="mx-2 mx-md-auto">
                 <Modal.Header closeButton className="bg-success text-white py-2">
                     <Modal.Title as="h6" className="mb-0 small fw-semibold d-flex align-items-center">
@@ -1080,7 +1120,7 @@ const EditEmployee = () => {
                 </Modal.Footer>
             </Modal>
 
-            {/* View Documents Modal - Responsive */}
+            {/* View Documents Modal */}
             <Modal show={showDocumentModal} onHide={() => setShowDocumentModal(false)} size="lg" centered dialogClassName="mx-2 mx-md-auto">
                 <Modal.Header closeButton className="bg-info text-white py-2">
                     <Modal.Title as="h6" className="mb-0 small fw-semibold d-flex align-items-center">

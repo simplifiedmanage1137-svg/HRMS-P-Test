@@ -457,7 +457,6 @@ router.get('/profile/:employeeId', async (req, res) => {
 
 
 // Get all employees (returns array directly)
-
 router.get('/', async (req, res) => {
     try {
         const { page = 1, limit = 50, department, search, active } = req.query;

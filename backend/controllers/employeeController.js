@@ -34,7 +34,7 @@ const generateEmployeeIdBasedOnJoiningDate = async (joiningDate) => {
                 const seq = parseInt(seqStr, 10);
                 return isNaN(seq) ? 0 : seq;
             });
-            
+
             const maxSequence = Math.max(...sequences);
             nextSequence = maxSequence + 1;
             console.log('Last sequence found:', maxSequence, 'Next sequence:', nextSequence);
@@ -205,7 +205,7 @@ exports.createEmployee = async (req, res) => {
 
         // Start transaction - Supabase doesn't support transactions directly
         // We'll do sequential operations with error handling
-        
+
         try {
             // Insert employee
             console.log('Inserting employee with data:', {
@@ -321,7 +321,7 @@ exports.createEmployee = async (req, res) => {
 
         } catch (error) {
             console.error('Transaction failed, rolling back...');
-            
+
             // Try to clean up if employee was created but user creation failed
             if (error.message.includes('user') && employeeId) {
                 try {
@@ -331,7 +331,7 @@ exports.createEmployee = async (req, res) => {
                     console.error('Failed to clean up employee:', cleanupError);
                 }
             }
-            
+
             throw error;
         }
 
@@ -396,14 +396,14 @@ exports.getAllEmployees = async (req, res) => {
 exports.getEmployeeById = async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         const { data: employees, error } = await supabase
             .from('employees')
             .select('*')
             .eq('id', id);
 
         if (error) throw error;
-        
+
         if (!employees || employees.length === 0) {
             return res.status(404).json({ message: 'Employee not found' });
         }
@@ -419,14 +419,14 @@ exports.getEmployeeById = async (req, res) => {
 exports.getEmployeeProfile = async (req, res) => {
     try {
         const { employeeId } = req.params;
-        
+
         const { data: employees, error } = await supabase
             .from('employees')
             .select('*')
             .eq('employee_id', employeeId);
 
         if (error) throw error;
-        
+
         if (!employees || employees.length === 0) {
             return res.status(404).json({ message: 'Employee not found' });
         }
@@ -442,33 +442,204 @@ exports.getEmployeeProfile = async (req, res) => {
 exports.updateEmployee = async (req, res) => {
     try {
         const { id } = req.params;
-        const updates = req.body;
+        const updates = { ...req.body };
+
+        console.log('='.repeat(50));
+        console.log('📝 UPDATE EMPLOYEE REQUEST');
+        console.log('Employee ID:', id);
+        console.log('Updates received:', JSON.stringify(updates, null, 2));
+        console.log('='.repeat(50));
+
+        // First, check if employee exists
+        const { data: existingEmployee, error: fetchError } = await supabase
+            .from('employees')
+            .select('id, employee_id')
+            .eq('id', id);
+
+        if (fetchError) {
+            console.error('Error fetching employee:', fetchError);
+            throw fetchError;
+        }
+
+        if (!existingEmployee || existingEmployee.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Employee not found'
+            });
+        }
 
         // Remove fields that shouldn't be updated
-        delete updates.id;
-        delete updates.employee_id;
-        delete updates.created_at;
+        const restrictedFields = [
+            'id',
+            'employee_id',
+            'created_at',
+            'updated_at',
+            'joining_month_count',
+            'can_apply_leave'
+        ];
 
-        const { data, error } = await supabase
+        restrictedFields.forEach(field => {
+            delete updates[field];
+        });
+
+        // Format dates if present
+        if (updates.dob) {
+            updates.dob = formatDateForPostgres(updates.dob);
+        }
+        if (updates.joining_date) {
+            updates.joining_date = formatDateForPostgres(updates.joining_date);
+        }
+
+        // Convert salary fields to numbers if present
+        if (updates.salary) {
+            updates.salary = parseFloat(updates.salary);
+        }
+        if (updates.gross_salary) {
+            updates.gross_salary = parseFloat(updates.gross_salary);
+        }
+        if (updates.in_hand_salary) {
+            updates.in_hand_salary = parseFloat(updates.in_hand_salary);
+        }
+
+        // Handle empty strings as null for optional fields
+        const optionalFields = [
+            'middle_name', 'phone', 'city', 'state', 'pincode',
+            'blood_group', 'emergency_contact', 'reporting_manager',
+            'bank_account_name', 'account_number', 'ifsc_code',
+            'branch_name', 'pan_number', 'aadhar_number',
+            'contract_policy', 'shift_timing', 'employment_type'
+        ];
+
+        optionalFields.forEach(field => {
+            if (updates[field] === '') {
+                updates[field] = null;
+            }
+        });
+
+        // Remove any fields that are undefined
+        Object.keys(updates).forEach(key => {
+            if (updates[key] === undefined) {
+                delete updates[key];
+            }
+        });
+
+        console.log('Processed updates:', JSON.stringify(updates, null, 2));
+
+        // If no fields to update
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No valid fields to update'
+            });
+        }
+
+        // Update employee
+        const { data: updatedEmployee, error: updateError } = await supabase
             .from('employees')
             .update(updates)
             .eq('id', id)
             .select();
 
-        if (error) throw error;
+        if (updateError) {
+            console.error('Update error:', updateError);
+            throw updateError;
+        }
 
-        if (!data || data.length === 0) {
-            return res.status(404).json({ message: 'Employee not found' });
+        if (!updatedEmployee || updatedEmployee.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Employee not found after update'
+            });
+        }
+
+        console.log('✅ Employee updated successfully:', updatedEmployee[0].employee_id);
+
+        // Also update the email in users table if email was changed
+        if (updates.email) {
+            const { error: userUpdateError } = await supabase
+                .from('users')
+                .update({ email: updates.email })
+                .eq('employee_id', updatedEmployee[0].employee_id);
+
+            if (userUpdateError) {
+                console.warn('⚠️ Could not update user email:', userUpdateError.message);
+                // Don't throw error, just log it
+            }
         }
 
         res.json({
+            success: true,
             message: 'Employee updated successfully',
-            employee: data[0]
+            employee: updatedEmployee[0]
         });
+
     } catch (error) {
-        console.error('Error updating employee:', error);
-        res.status(500).json({ message: 'Error updating employee' });
+        console.error('='.repeat(50));
+        console.error('❌ ERROR UPDATING EMPLOYEE:');
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error details:', error.details);
+        console.error('Error hint:', error.hint);
+        console.error('Stack:', error.stack);
+        console.error('='.repeat(50));
+
+        let errorMessage = 'Error updating employee';
+        let statusCode = 500;
+
+        if (error.code === '23505') {
+            errorMessage = 'Duplicate entry - email or employee ID already exists';
+            statusCode = 409;
+        } else if (error.code === '23503') {
+            errorMessage = 'Foreign key constraint violation';
+            statusCode = 400;
+        } else if (error.code === '23502') {
+            errorMessage = 'Required field cannot be null';
+            statusCode = 400;
+        } else if (error.code === '42703') {
+            errorMessage = 'Database column does not exist. Please check the field names.';
+            statusCode = 500;
+        } else if (error.message) {
+            errorMessage = error.message;
+        }
+
+        res.status(statusCode).json({
+            success: false,
+            message: errorMessage,
+            error: error.message,
+            code: error.code,
+            details: error.details
+        });
     }
+};
+
+// Helper function to format dates
+const formatDateForPostgres = (dateStr) => {
+    if (!dateStr) return null;
+
+    // If already in YYYY-MM-DD format
+    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        return dateStr;
+    }
+
+    // If date is in MM/DD/YYYY format
+    if (dateStr.includes('/')) {
+        const [month, day, year] = dateStr.split('/');
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+
+    // If date is in DD/MM/YYYY format
+    if (dateStr.includes('-')) {
+        const parts = dateStr.split('-');
+        if (parts[0].length === 4) {
+            return dateStr; // Already YYYY-MM-DD
+        }
+        // Assume DD-MM-YYYY
+        const [day, month, year] = parts;
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+
+    return dateStr;
 };
 
 // Delete employee
@@ -521,7 +692,7 @@ exports.uploadDocuments = async (req, res) => {
     try {
         const { employeeId } = req.params;
         const files = req.files;
-        
+
         console.log('='.repeat(50));
         console.log('UPLOAD DOCUMENTS REQUEST');
         console.log('Employee ID:', employeeId);
@@ -594,8 +765,8 @@ exports.uploadDocuments = async (req, res) => {
         console.error('Error stack:', error.stack);
         console.error('='.repeat(50));
 
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             message: 'Error uploading documents',
             error: error.message
         });
@@ -606,9 +777,9 @@ exports.uploadDocuments = async (req, res) => {
 exports.getEmployeeDocuments = async (req, res) => {
     try {
         const { employeeId } = req.params;
-        
+
         console.log('Fetching documents for employee:', employeeId);
-        
+
         const { data: employees, error } = await supabase
             .from('employees')
             .select(`
@@ -655,7 +826,7 @@ exports.getEmployeeDocuments = async (req, res) => {
 exports.downloadDocument = async (req, res) => {
     try {
         const { employeeId, documentType } = req.params;
-        
+
         console.log('='.repeat(50));
         console.log('DOWNLOAD DOCUMENT REQUEST');
         console.log('Employee ID/Param:', employeeId);
@@ -680,7 +851,7 @@ exports.downloadDocument = async (req, res) => {
 
         // Get the filename from the database
         const filename = employee[documentType];
-        
+
         if (!filename) {
             console.log('Document not found for type:', documentType);
             return res.status(404).json({ message: 'Document not found in database' });
@@ -703,11 +874,11 @@ exports.downloadDocument = async (req, res) => {
         // Check if file exists
         if (!fs.existsSync(filePath)) {
             console.log('File not found on disk at:', filePath);
-            
+
             // Try alternative paths
             const altPath = path.join(baseDir, 'uploads/documents/', filename);
             console.log('Trying alternative path:', altPath);
-            
+
             if (fs.existsSync(altPath)) {
                 console.log('File found at alternative path');
                 filePath = altPath;
@@ -719,24 +890,24 @@ exports.downloadDocument = async (req, res) => {
         // Get file stats
         const stats = fs.statSync(filePath);
         const ext = path.extname(filename).toLowerCase();
-        
+
         console.log('File extension:', ext);
         console.log('File size:', stats.size);
 
         // Set appropriate headers based on file type
         let contentType = 'application/octet-stream';
         let contentDisposition = `inline; filename="${filename}"`;
-        
+
         // Handle different file types
         const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
         const pdfExts = ['.pdf'];
         const wordExts = ['.doc', '.docx'];
         const textExts = ['.txt', '.csv', '.json'];
-        
+
         if (pdfExts.includes(ext)) {
             contentType = 'application/pdf';
             contentDisposition = `inline; filename="${filename}"`; // Show in browser
-        } 
+        }
         else if (imageExts.includes(ext)) {
             contentType = `image/${ext.replace('.', '')}`;
             contentDisposition = `inline; filename="${filename}"`; // Show in browser
@@ -777,10 +948,10 @@ exports.downloadDocument = async (req, res) => {
         console.error('Error stack:', error.stack);
         console.error('='.repeat(50));
 
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             message: 'Error downloading document',
-            error: error.message 
+            error: error.message
         });
     }
 };
