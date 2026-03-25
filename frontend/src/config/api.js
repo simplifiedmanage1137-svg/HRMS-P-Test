@@ -47,12 +47,22 @@ export const API_ENDPOINTS = {
     // Attendance endpoints
     ATTENDANCE: `${API_BASE_URL}/api/attendance`,
     ATTENDANCE_REPORT: `${API_BASE_URL}/api/attendance/report`,
+    ATTENDANCE_EMPLOYEE_REPORT: (employee_id, start, end) => 
+        `${API_BASE_URL}/api/attendance/employee-report/${employee_id}?start=${start}&end=${end}`, 
     ATTENDANCE_TODAY: (employee_id) => `${API_BASE_URL}/api/attendance/today/${employee_id}`,
     ATTENDANCE_CLOCK_IN: `${API_BASE_URL}/api/attendance/clock-in`,
     ATTENDANCE_CLOCK_OUT: `${API_BASE_URL}/api/attendance/clock-out`,
     ATTENDANCE_HEARTBEAT: `${API_BASE_URL}/api/attendance/heartbeat`,
     ATTENDANCE_CHECK_ACTIVE: `${API_BASE_URL}/api/attendance/check-active`,
     ATTENDANCE_MARK_ABSENT: `${API_BASE_URL}/api/attendance/mark-absent`,
+    
+    // Attendance Regularization endpoints
+    ATTENDANCE_MISSED_CLOCKOUTS: (employee_id) => `${API_BASE_URL}/api/attendance/missed-clockouts/${employee_id}`,
+    ATTENDANCE_REGULARIZATION_REQUEST: (employee_id) => `${API_BASE_URL}/api/attendance/regularization/${employee_id}/request`,
+    ATTENDANCE_PENDING_REGULARIZATIONS: `${API_BASE_URL}/api/attendance/regularization/pending`,
+    ATTENDANCE_APPROVE_REGULARIZATION: (request_id) => `${API_BASE_URL}/api/attendance/regularization/${request_id}/approve`,
+    ATTENDANCE_REJECT_REGULARIZATION: (request_id) => `${API_BASE_URL}/api/attendance/regularization/${request_id}/reject`,
+    ATTENDANCE_AUTO_CLOSE_STALE: `${API_BASE_URL}/api/attendance/auto-close-stale`,
     
     // Overtime endpoints
     OVERTIME_SUMMARY: (employeeId, month, year) => 
@@ -189,13 +199,21 @@ export const API_ENDPOINTS = {
 
     // Health check
     HEALTH_CHECK: `${API_BASE_URL}/api/health`,
-    HEALTH_CHECK_DB: `${API_BASE_URL}/api/health/db`
+    HEALTH_CHECK_DB: `${API_BASE_URL}/api/health/db`,
+
+    // System endpoints
+    SYSTEM_STATUS: `${API_BASE_URL}/api/system/status`,
+    SYSTEM_LOGS: `${API_BASE_URL}/api/system/logs`,
+    SYSTEM_CLEAR_CACHE: `${API_BASE_URL}/api/system/clear-cache`
 };
 
 // Log all endpoints for debugging
 console.log('🔧 API Endpoints loaded:', {
     LOGIN: API_ENDPOINTS.LOGIN,
     TODAY_EVENTS: API_ENDPOINTS.TODAY_EVENTS,
+    ATTENDANCE_MISSED_CLOCKOUTS: API_ENDPOINTS.ATTENDANCE_MISSED_CLOCKOUTS,
+    ATTENDANCE_REGULARIZATION_REQUEST: API_ENDPOINTS.ATTENDANCE_REGULARIZATION_REQUEST,
+    ATTENDANCE_PENDING_REGULARIZATIONS: API_ENDPOINTS.ATTENDANCE_PENDING_REGULARIZATIONS,
     BASE_URL: API_BASE_URL
 });
 

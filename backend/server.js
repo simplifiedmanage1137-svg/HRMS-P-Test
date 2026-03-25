@@ -7,6 +7,7 @@ const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
+const cron = require('node-cron'); // Add this for cron jobs
 
 // Load environment variables
 dotenv.config();
@@ -18,12 +19,15 @@ const supabase = require('./config/supabase');
 const authRoutes = require('./routes/authRoutes');
 const employeeRoutes = require('./routes/employeeRoutes');
 const leaveRoutes = require('./routes/leaveRoutes');
-const attendanceRoutes = require('./routes/attendanceRoutes')(supabase);
+const attendanceRoutes = require('./routes/attendanceRoutes');
 const salaryRoutes = require('./routes/salaryRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const adminUpdateRoutes = require('./routes/adminUpdateRoutes');
 const employeeUpdateRoutes = require('./routes/employeeUpdateRoutes');
 const updateResponseRoutes = require('./routes/updateResponseRoutes');
+
+// Import attendance controller for cron jobs
+const attendanceController = require('./controllers/attendanceController');
 
 // Initialize Express app
 const app = express();
@@ -39,15 +43,22 @@ console.log(`Port: ${PORT}`);
 console.log('='.repeat(70));
 
 // ============== CORS CONFIGURATION ==============
-// Define allowed origins - CORRECTED
+// Define allowed origins
 const allowedOrigins = [
     'http://localhost:5173',  // Local development (Vite default)
+    'http://localhost:5174',  // Vite alternate port
     'http://localhost:3000',   // Local development (React default)
+    'http://localhost:3001',   // React alternate
     'http://127.0.0.1:5173',
+    'http://127.0.0.1:5174',
     'http://127.0.0.1:3000',
-    'https://employee-management-system-six-gray.vercel.app', // Your Vercel frontend - FIXED (removed double slash)
+    'http://127.0.0.1:3001',
+    'https://employee-management-system-six-gray.vercel.app', // Your Vercel frontend
     'https://employee-management-system-brvo.onrender.com' // Your backend URL
 ];
+
+// Remove duplicates
+const uniqueAllowedOrigins = [...new Set(allowedOrigins)];
 
 // Configure CORS options
 const corsOptions = {
@@ -59,12 +70,12 @@ const corsOptions = {
         }
         
         // Check if origin is allowed
-        if (allowedOrigins.indexOf(origin) !== -1) {
+        if (uniqueAllowedOrigins.indexOf(origin) !== -1) {
             console.log(`✅ CORS allowed for origin: ${origin}`);
             callback(null, true);
         } else {
             console.log(`❌ CORS blocked for origin: ${origin}`);
-            console.log(`   Allowed origins: ${allowedOrigins.join(', ')}`);
+            console.log(`   Allowed origins: ${uniqueAllowedOrigins.join(', ')}`);
             callback(new Error('Not allowed by CORS'));
         }
     },
@@ -90,7 +101,7 @@ app.use(cors(corsOptions));
 app.use((req, res, next) => {
     const origin = req.headers.origin;
     console.log(`📍 ${req.method} ${req.url} - Origin: ${origin || 'no origin'}`);
-    if (origin && allowedOrigins.includes(origin)) {
+    if (origin && uniqueAllowedOrigins.includes(origin)) {
         console.log(`✅ CORS allowed: ${origin}`);
     }
     next();
@@ -106,14 +117,17 @@ const createUploadDirectories = () => {
     const profilesDir = path.join(uploadsDir, 'profiles');
     const documentsDir = path.join(uploadsDir, 'documents');
     
-    [uploadsDir, profilesDir, documentsDir].forEach(dir => {
+    // Create logs directory for cron job logs
+    const logsDir = path.join(__dirname, 'logs');
+    
+    [uploadsDir, profilesDir, documentsDir, logsDir].forEach(dir => {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
             console.log(`✅ Created directory: ${dir}`);
         }
     });
     
-    return { uploadsDir, profilesDir, documentsDir };
+    return { uploadsDir, profilesDir, documentsDir, logsDir };
 };
 
 const { uploadsDir } = createUploadDirectories();
@@ -149,98 +163,6 @@ const uploadDocuments = multer({
             cb(new Error('Only images and documents are allowed'));
         }
     }
-});
-
-// ============== HEALTH CHECK ENDPOINTS ==============
-app.get('/api/health', (req, res) => {
-    res.json({
-        success: true,
-        message: 'Server is healthy',
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development',
-        port: PORT,
-        cors_enabled: true,
-        allowed_origins: allowedOrigins
-    });
-});
-
-app.get('/api/test', (req, res) => {
-    res.json({
-        success: true,
-        message: 'Backend is working!',
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development',
-        cors: {
-            origins: allowedOrigins,
-            requestOrigin: req.headers.origin || 'No origin',
-            allowedHeaders: 'Content-Type, Authorization, X-Requested-With, Accept, Origin, employee-id, X-Employee-Id'
-        }
-    });
-});
-
-app.get('/api/test-db', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('employees')
-            .select('count', { count: 'exact', head: true });
-        
-        if (error) throw error;
-        
-        res.json({
-            success: true,
-            message: 'Supabase connected successfully!',
-            database: 'Supabase',
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        console.error('Database connection error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Supabase connection failed',
-            error: error.message
-        });
-    }
-});
-
-// ============== CORS DEBUG ENDPOINT ==============
-app.get('/api/cors-debug', (req, res) => {
-    res.json({
-        success: true,
-        headers: req.headers,
-        origin: req.headers.origin,
-        method: req.method,
-        allowed_origins: allowedOrigins,
-        cors_headers: {
-            'Access-Control-Allow-Origin': res.getHeader('Access-Control-Allow-Origin'),
-            'Access-Control-Allow-Methods': res.getHeader('Access-Control-Allow-Methods'),
-            'Access-Control-Allow-Headers': res.getHeader('Access-Control-Allow-Headers')
-        }
-    });
-});
-
-// ============== ROOT ENDPOINT ==============
-app.get('/', (req, res) => {
-    res.json({
-        name: 'Employee Management System API',
-        version: '1.0.0',
-        status: 'running',
-        timestamp: new Date().toISOString(),
-        endpoints: {
-            health: '/api/health',
-            test: '/api/test',
-            testDb: '/api/test-db',
-            corsDebug: '/api/cors-debug',
-            auth: '/api/auth/*',
-            employees: '/api/employees/*',
-            leaves: '/api/leaves/*',
-            attendance: '/api/attendance/*',
-            salary: '/api/salary/*',
-            notifications: '/api/notifications/*',
-            adminUpdates: '/api/admin-updates/*',
-            employeeUpdates: '/api/employee-updates/*',
-            updateResponses: '/api/update-responses/*'
-        }
-    });
 });
 
 // ============== AUTHENTICATION MIDDLEWARE ==============
@@ -293,12 +215,225 @@ app.use('/api/auth', authRoutes);
 // Protected routes (authentication required)
 app.use('/api/employees', authenticateToken, employeeRoutes);
 app.use('/api/leaves', authenticateToken, leaveRoutes);
-app.use('/api/attendance', authenticateToken, attendanceRoutes);
+app.use('/api/attendance', authenticateToken, attendanceRoutes(supabase, authenticateToken, requireAdmin));
 app.use('/api/salary', authenticateToken, salaryRoutes);
 app.use('/api/notifications', authenticateToken, notificationRoutes);
 app.use('/api/admin-updates', authenticateToken, adminUpdateRoutes);
 app.use('/api/employee-updates', authenticateToken, employeeUpdateRoutes);
 app.use('/api/update-responses', authenticateToken, updateResponseRoutes);
+
+// Make uploadDocuments available to routes
+app.locals.uploadDocuments = uploadDocuments;
+
+// ============== HEALTH CHECK ENDPOINTS ==============
+app.get('/api/health', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Server is healthy',
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development',
+        port: PORT,
+        cors_enabled: true,
+        allowed_origins: uniqueAllowedOrigins,
+        features: {
+            attendance_regularization: true,
+            auto_close_sessions: true,
+            cron_jobs_enabled: true
+        }
+    });
+});
+
+app.get('/api/test', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Backend is working!',
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development',
+        cors: {
+            origins: uniqueAllowedOrigins,
+            requestOrigin: req.headers.origin || 'No origin',
+            allowedHeaders: 'Content-Type, Authorization, X-Requested-With, Accept, Origin, employee-id, X-Employee-Id'
+        }
+    });
+});
+
+app.get('/api/test-db', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('employees')
+            .select('count', { count: 'exact', head: true });
+        
+        if (error) throw error;
+        
+        res.json({
+            success: true,
+            message: 'Supabase connected successfully!',
+            database: 'Supabase',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Database connection error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Supabase connection failed',
+            error: error.message
+        });
+    }
+});
+
+// ============== CORS DEBUG ENDPOINT ==============
+app.get('/api/cors-debug', (req, res) => {
+    res.json({
+        success: true,
+        headers: req.headers,
+        origin: req.headers.origin,
+        method: req.method,
+        allowed_origins: uniqueAllowedOrigins,
+        cors_headers: {
+            'Access-Control-Allow-Origin': res.getHeader('Access-Control-Allow-Origin'),
+            'Access-Control-Allow-Methods': res.getHeader('Access-Control-Allow-Methods'),
+            'Access-Control-Allow-Headers': res.getHeader('Access-Control-Allow-Headers')
+        }
+    });
+});
+
+// ============== ROOT ENDPOINT ==============
+app.get('/', (req, res) => {
+    res.json({
+        name: 'Employee Management System API',
+        version: '2.0.0',
+        status: 'running',
+        timestamp: new Date().toISOString(),
+        features: {
+            attendance_regularization: true,
+            auto_close_missed_clockouts: true,
+            overtime_calculation: true,
+            comp_off_management: true
+        },
+        endpoints: {
+            health: '/api/health',
+            test: '/api/test',
+            testDb: '/api/test-db',
+            corsDebug: '/api/cors-debug',
+            auth: '/api/auth/*',
+            employees: '/api/employees/*',
+            leaves: '/api/leaves/*',
+            attendance: '/api/attendance/*',
+            salary: '/api/salary/*',
+            notifications: '/api/notifications/*',
+            adminUpdates: '/api/admin-updates/*',
+            employeeUpdates: '/api/employee-updates/*',
+            updateResponses: '/api/update-responses/*'
+        }
+    });
+});
+
+// ============== CRON JOBS ==============
+console.log('\n' + '='.repeat(70));
+console.log('⏰ SETTING UP CRON JOBS');
+console.log('='.repeat(70));
+
+// Function to log cron job activities
+const logCronActivity = (type, message, duration = null) => {
+    const logDir = path.join(__dirname, 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    
+    const logEntry = {
+        timestamp: new Date().toISOString(),
+        type: type,
+        message: message,
+        duration: duration,
+        environment: process.env.NODE_ENV || 'development'
+    };
+    
+    fs.appendFileSync(
+        path.join(logDir, 'cron-jobs.log'),
+        JSON.stringify(logEntry) + '\n'
+    );
+};
+
+// Run auto-close check every hour (at minute 0)
+cron.schedule('0 * * * *', async () => {
+    console.log('\n🕐 Running scheduled auto-close check...');
+    const startTime = Date.now();
+    try {
+        const result = await attendanceController.autoCloseStaleSessions();
+        const duration = Date.now() - startTime;
+        console.log(`✅ Auto-close completed in ${duration}ms: ${result.closedCount} sessions closed`);
+        
+        // Log to file if in production or if there were sessions closed
+        if (isProduction || result.closedCount > 0) {
+            logCronActivity('AUTO_CLOSE', `${result.closedCount} sessions closed`, duration);
+        }
+    } catch (error) {
+        console.error('❌ Auto-close cron error:', error);
+        logCronActivity('AUTO_CLOSE_ERROR', error.message);
+    }
+});
+
+// Run end-of-day absent marking at midnight (23:59)
+cron.schedule('59 23 * * *', async () => {
+    console.log('\n🌙 Running end-of-day absent marking...');
+    const startTime = Date.now();
+    try {
+        const result = await attendanceController.markAbsentAtDayEnd();
+        const duration = Date.now() - startTime;
+        console.log(`✅ Absent marking completed in ${duration}ms: ${result.message}`);
+        
+        // Log to file
+        logCronActivity('END_OF_DAY', result.message, duration);
+    } catch (error) {
+        console.error('❌ End-of-day marking error:', error);
+        logCronActivity('END_OF_DAY_ERROR', error.message);
+    }
+});
+
+// Run database cleanup weekly (Sunday at 2 AM)
+cron.schedule('0 2 * * 0', async () => {
+    console.log('\n🧹 Running weekly database cleanup...');
+    const startTime = Date.now();
+    try {
+        // Clean up old inactive sessions (older than 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const { count: sessionsCount, error: sessionError } = await supabase
+            .from('attendance_sessions')
+            .delete()
+            .eq('is_active', false)
+            .lt('clock_out_time', thirtyDaysAgo.toISOString())
+            .select('count', { count: 'exact', head: true });
+        
+        if (sessionError) throw sessionError;
+        
+        // Clean up old regularization requests (older than 90 days)
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        
+        const { count: requestsCount, error: reqError } = await supabase
+            .from('regularization_requests')
+            .delete()
+            .in('status', ['approved', 'rejected'])
+            .lt('created_at', ninetyDaysAgo.toISOString())
+            .select('count', { count: 'exact', head: true });
+        
+        if (reqError) throw reqError;
+        
+        const duration = Date.now() - startTime;
+        console.log(`✅ Cleanup completed in ${duration}ms: ${sessionsCount || 0} sessions, ${requestsCount || 0} requests removed`);
+        
+        // Log to file
+        logCronActivity('WEEKLY_CLEANUP', `${sessionsCount || 0} sessions, ${requestsCount || 0} requests removed`, duration);
+    } catch (error) {
+        console.error('❌ Weekly cleanup error:', error);
+        logCronActivity('WEEKLY_CLEANUP_ERROR', error.message);
+    }
+});
+
+console.log('✅ Cron jobs configured:');
+console.log('   - Hourly: Auto-close stale sessions');
+console.log('   - Daily at 23:59: End-of-day absent marking');
+console.log('   - Weekly on Sunday at 02:00: Database cleanup');
 
 // ============== ERROR HANDLING MIDDLEWARE ==============
 // 404 handler
@@ -335,7 +470,7 @@ app.use((err, req, res, next) => {
             message: 'CORS error: Origin not allowed',
             error: err.message,
             origin: req.headers.origin,
-            allowedOrigins: allowedOrigins
+            allowedOrigins: uniqueAllowedOrigins
         });
     }
     
@@ -346,6 +481,33 @@ app.use((err, req, res, next) => {
             message: 'File upload error',
             error: err.message
         });
+    }
+    
+    // Handle JWT errors
+    if (err.name === 'JsonWebTokenError') {
+        return res.status(401).json({
+            success: false,
+            message: 'Invalid token',
+            error: err.message
+        });
+    }
+    
+    if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({
+            success: false,
+            message: 'Token expired',
+            error: err.message
+        });
+    }
+    
+    // Log error to file if in production
+    if (isProduction) {
+        const logDir = path.join(__dirname, 'logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(
+            path.join(logDir, 'errors.log'),
+            `${new Date().toISOString()} - ${err.stack}\n`
+        );
     }
     
     res.status(500).json({
@@ -365,7 +527,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🔗 Public URL: ${process.env.RENDER_EXTERNAL_URL || 'Not set'}`);
     console.log('='.repeat(70));
     console.log(`🔧 CORS Allowed Origins:`);
-    allowedOrigins.forEach(origin => {
+    uniqueAllowedOrigins.forEach(origin => {
         console.log(`   - ${origin}`);
     });
     console.log(`🔧 CORS Allowed Headers:`);
@@ -377,17 +539,80 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   - employee-id`);
     console.log(`   - X-Employee-Id`);
     console.log('='.repeat(70));
+    console.log(`✨ Features enabled:`);
+    console.log(`   - Attendance Regularization`);
+    console.log(`   - Auto-close Missed Clock-outs`);
+    console.log(`   - Overtime Calculation`);
+    console.log(`   - Comp-off Management`);
+    console.log(`   - Cron Jobs (Hourly/Daily/Weekly)`);
+    console.log('='.repeat(70));
 });
+
+// Handle graceful shutdown
+const gracefulShutdown = async () => {
+    console.log('\n🛑 Received shutdown signal, closing server gracefully...');
+    
+    // Close any open database connections
+    if (supabase && supabase.supabaseClient) {
+        console.log('📡 Closing database connections...');
+        // Supabase doesn't have explicit close, but we can log
+        console.log('✅ Database connections closed');
+    }
+    
+    // Log shutdown
+    const logDir = path.join(__dirname, 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(
+        path.join(logDir, 'server.log'),
+        `${new Date().toISOString()} - Server shutdown\n`
+    );
+    
+    console.log('✅ Server shutdown complete');
+    process.exit(0);
+};
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
-    process.exit(1);
+    console.error('Stack:', error.stack);
+    
+    // Log to file if in production
+    if (isProduction) {
+        const logDir = path.join(__dirname, 'logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(
+            path.join(logDir, 'errors.log'),
+            `${new Date().toISOString()} - Uncaught Exception: ${error.stack}\n`
+        );
+    }
+    
+    // Don't exit in development
+    if (process.env.NODE_ENV === 'production') {
+        process.exit(1);
+    }
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    
+    // Log to file if in production
+    if (isProduction) {
+        const logDir = path.join(__dirname, 'logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(
+            path.join(logDir, 'errors.log'),
+            `${new Date().toISOString()} - Unhandled Rejection: ${reason}\n`
+        );
+    }
+    
+    // Don't exit in development
+    if (process.env.NODE_ENV === 'production') {
+        process.exit(1);
+    }
 });
 
 module.exports = app;

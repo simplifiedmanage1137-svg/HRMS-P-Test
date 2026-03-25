@@ -1,4 +1,3 @@
-// src/components/Employee/Attendance.jsx
 import React, { useState, useEffect } from 'react';
 import {
   Card, Button, Alert, Spinner, Badge,
@@ -17,7 +16,8 @@ import {
   FaCalendarAlt,
   FaMoon,
   FaCloudSun,
-  FaHistory
+  FaHistory,
+  FaRegClock
 } from 'react-icons/fa';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
@@ -93,6 +93,16 @@ const Attendance = () => {
     ]
   });
 
+  // Regularization states
+  const [missedClockOuts, setMissedClockOuts] = useState([]);
+  const [showRegularizationModal, setShowRegularizationModal] = useState(false);
+  const [selectedMissedRecord, setSelectedMissedRecord] = useState(null);
+  const [regularizationTime, setRegularizationTime] = useState('');
+  const [regularizationReason, setRegularizationReason] = useState('');
+  const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+
   const STORAGE_KEY = `attendance_session_${user?.employeeId}`;
 
   const OFFICE_COORDS = {
@@ -103,6 +113,7 @@ const Attendance = () => {
   };
 
   // Helper function to format time
+  // Helper function to format time - improved
   const formatTime = (datetime) => {
     if (!datetime) return '--:--';
     try {
@@ -118,7 +129,6 @@ const Attendance = () => {
     }
   };
 
-  // Helper function to format short date
   const formatShortDate = (dateString) => {
     if (!dateString) return 'N/A';
     const [year, month, day] = dateString.split('-').map(Number);
@@ -129,47 +139,43 @@ const Attendance = () => {
     });
   };
 
-  // Format late time in Hours, Minutes, Seconds format - FIXED to show hours when applicable
+  // Helper function to format date for string comparison
+  const formatDateStr = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Format late time in Hours, Minutes, Seconds format
   const formatLateTime = (lateMinutes) => {
-    // Handle null, undefined, or invalid values
     if (!lateMinutes || lateMinutes === 0 || lateMinutes === null || lateMinutes === undefined) {
       return null;
     }
-    
-    // Parse to number if it's a string
+
     let minutes = typeof lateMinutes === 'string' ? parseFloat(lateMinutes) : lateMinutes;
-    
-    // Check if it's a valid number
+
     if (isNaN(minutes) || minutes <= 0) {
       return null;
     }
-    
-    // Convert minutes to hours, minutes, seconds
+
     const totalMinutes = minutes;
     const hours = Math.floor(totalMinutes / 60);
     const remainingMinutes = Math.floor(totalMinutes % 60);
     const seconds = Math.round((totalMinutes - Math.floor(totalMinutes)) * 60);
-    
-    // Format based on what's available
-    if (hours > 0) {
-      if (remainingMinutes > 0 && seconds > 0) {
-        return `${hours}h ${remainingMinutes}m ${seconds}s`;
-      } else if (remainingMinutes > 0) {
-        return `${hours}h ${remainingMinutes}m`;
-      } else if (seconds > 0) {
-        return `${hours}h ${seconds}s`;
-      } else {
-        return `${hours}h`;
-      }
-    } else if (remainingMinutes > 0) {
-      if (seconds > 0) {
-        return `${remainingMinutes}m ${seconds}s`;
-      } else {
-        return `${remainingMinutes}m`;
-      }
-    } else {
-      return `${seconds}s`;
+
+    // Always include hours, even if 0
+    let result = `${hours}h`;
+
+    if (remainingMinutes > 0 || seconds > 0) {
+      result += ` ${remainingMinutes}m`;
     }
+
+    if (seconds > 0) {
+      result += ` ${seconds}s`;
+    }
+
+    return `Late ${result}`;
   };
 
   // Calculate distance between two coordinates
@@ -188,71 +194,46 @@ const Attendance = () => {
     return R * c;
   };
 
-  // Get attendance status badge with late display in Hours/Minutes/Seconds format
+  // Update the getAttendanceStatusBadge function
   const getAttendanceStatusBadge = (record) => {
-    // Weekly off check
+    const today = new Date().toISOString().split('T')[0];
+    const isToday = record.attendance_date === today;
+
+    // Weekly off
     if (record.isWeeklyOff) {
       return <Badge bg="secondary" className="px-2 py-1"><FaMoon className="me-1" size={10} /> W-OFF</Badge>;
     }
 
-    // Not clocked in
+    // No clock-in
     if (!record.clock_in) {
       return <Badge bg="secondary" className="px-2 py-1"><FaClock className="me-1" size={10} /> Not Clocked</Badge>;
     }
 
-    const isLate = record.late_minutes > 0;
-    // Get late display from record or format it
-    let lateDisplay = record.late_display;
-    if (isLate && !lateDisplay) {
-      lateDisplay = formatLateTime(record.late_minutes);
-    }
-    
-    // Working (clocked in but not out)
-    if (record.clock_in && !record.clock_out) {
-      if (isLate) {
-        return (
-          <Badge bg="danger" className="px-2 py-1 d-inline-flex align-items-center">
-            <FaExclamationTriangle className="me-1" size={10} />
-            Working {lateDisplay ? `(+${lateDisplay})` : '(Late)'}
-          </Badge>
-        );
-      }
+    // Today's active session
+    if (isToday && record.clock_in && !record.clock_out) {
       return <Badge bg="info" className="px-2 py-1"><FaClock className="me-1" size={10} /> Working</Badge>;
     }
 
-    // Present (clocked out)
+    // Past dates - show final status (NO LATE TIME)
     if (record.status === 'present') {
-      if (isLate) {
-        return (
-          <Badge bg="danger" className="px-2 py-1 d-inline-flex align-items-center">
-            <FaExclamationTriangle className="me-1" size={10} />
-            Present {lateDisplay ? `(+${lateDisplay})` : '(Late)'}
-          </Badge>
-        );
-      }
       return <Badge bg="success" className="px-2 py-1"><FaCheckCircle className="me-1" size={10} /> Present</Badge>;
     }
 
-    // Half day
     if (record.status === 'half_day') {
-      if (isLate) {
-        return (
-          <Badge bg="danger" className="px-2 py-1 d-inline-flex align-items-center">
-            <FaExclamationTriangle className="me-1" size={10} />
-            Half Day {lateDisplay ? `(+${lateDisplay})` : '(Late)'}
-          </Badge>
-        );
-      }
       return <Badge bg="warning" className="text-dark px-2 py-1"><FaCloudSun className="me-1" size={10} /> Half Day</Badge>;
     }
 
-    // Absent
     if (record.status === 'absent') {
       return <Badge bg="danger" className="px-2 py-1"><FaExclamationTriangle className="me-1" size={10} /> Absent</Badge>;
     }
 
+    if (record.is_regularized) {
+      return <Badge bg="info" className="px-2 py-1"><FaCheckCircle className="me-1" size={10} /> Regularized</Badge>;
+    }
+
     return <Badge bg="secondary" className="px-2 py-1">Not Clocked</Badge>;
   };
+
 
   // Save session to local storage
   const saveSessionToStorage = (session) => {
@@ -303,7 +284,6 @@ const Attendance = () => {
       console.log('📊 Today attendance from API:', attendanceData);
 
       if (attendanceData) {
-        // Ensure late_display is set with proper format
         if (attendanceData.late_minutes > 0 && !attendanceData.late_display) {
           attendanceData.late_display = formatLateTime(attendanceData.late_minutes);
         }
@@ -337,38 +317,266 @@ const Attendance = () => {
     }
   };
 
-  // Generate last 30 days attendance with proper late display
+  const fetchMissedClockOuts = async () => {
+    try {
+      const response = await axios.get(API_ENDPOINTS.ATTENDANCE_MISSED_CLOCKOUTS(user.employeeId));
+      const missedRecords = response.data.missed_clockouts || [];
+
+      console.log('📋 Missed clock-outs fetched:', missedRecords.length);
+
+      // Log all records to debug
+      missedRecords.forEach((record, index) => {
+        console.log(`\n📅 Record ${index + 1}:`);
+        console.log(`   ID: ${record.id}`);
+        console.log(`   Attendance Date: ${record.attendance_date}`);
+        console.log(`   Clock In: ${new Date(record.clock_in).toLocaleString()}`);
+        console.log(`   Is Regularized: ${record.is_regularized}`);
+        console.log(`   Regularization Requested: ${record.regularization_requested}`);
+        console.log(`   Regularization Status: ${record.regularization_status}`);
+        console.log(`   Should Show Button: ${!record.is_regularized && !record.regularization_requested}`);
+      });
+
+      setMissedClockOuts(missedRecords);
+
+      // Filter records that need regularization (not regularized AND not requested)
+      const needRegularization = missedRecords.filter(
+        record => !record.is_regularized && !record.regularization_requested
+      );
+
+      console.log('📋 Records needing regularization:', needRegularization.length);
+
+      if (needRegularization.length > 0 && !sessionStorage.getItem('missed_clockout_shown')) {
+        sessionStorage.setItem('missed_clockout_shown', 'true');
+        setMessage({
+          type: 'warning',
+          text: `You have ${needRegularization.length} missed clock-out(s) from previous days. Please request regularization to update your attendance.`
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching missed clock-outs:', error);
+    }
+  };
+
+  const handleRegularizationRequest = async () => {
+    if (!regularizationTime) {
+      setMessage({ type: 'danger', text: 'Please select clock-out time' });
+      return;
+    }
+
+    if (!selectedMissedRecord) {
+      setMessage({ type: 'danger', text: 'No record selected' });
+      return;
+    }
+
+    setSubmittingRequest(true);
+
+    try {
+      console.log('='.repeat(60));
+      console.log('📝 Processing Regularization Request');
+      console.log('Selected missed record:', {
+        id: selectedMissedRecord.id,
+        attendance_date: selectedMissedRecord.attendance_date,
+        clock_in: selectedMissedRecord.clock_in
+      });
+
+      // Parse the selected datetime-local value
+      const selectedDateTime = regularizationTime;
+      console.log('Selected datetime string:', selectedDateTime);
+
+      // IMPORTANT: Parse the datetime-local value WITHOUT timezone conversion
+      // The datetime-local input gives us "YYYY-MM-DDThh:mm" in local time
+      // We need to send this exact date and time to the server
+      const [datePart, timePart] = selectedDateTime.split('T');
+      const [year, month, day] = datePart.split('-');
+      const [hour, minute] = timePart.split(':');
+
+      // Create a date string that represents the local time
+      // Format: YYYY-MM-DD HH:MM:SS
+      const localDateTimeStr = `${year}-${month}-${day} ${hour}:${minute}:00`;
+
+      console.log('Local datetime string:', localDateTimeStr);
+
+      // Get the clock-in time from the missed record
+      const clockInTime = new Date(selectedMissedRecord.clock_in);
+
+      console.log('📅 Selected Record Details:');
+      console.log('  - Attendance Date:', selectedMissedRecord.attendance_date);
+      console.log('  - Clock In (local):', clockInTime.toLocaleString());
+      console.log('  - Selected Time (local):', localDateTimeStr);
+
+      console.log('✅ Validations passed!');
+
+      // Prepare request data - send the local datetime string
+      const requestData = {
+        attendance_id: String(selectedMissedRecord.id),
+        requested_clock_out_time: localDateTimeStr, // Send as local datetime string
+        attendance_date: selectedMissedRecord.attendance_date,
+        reason: regularizationReason || 'Missed clock-out'
+      };
+
+      console.log('📤 Sending request to server:', requestData);
+
+      const url = API_ENDPOINTS.ATTENDANCE_REGULARIZATION_REQUEST(user.employeeId);
+      console.log('📤 Request URL:', url);
+
+      const response = await axios.post(url, requestData);
+
+      console.log('✅ Success response:', response.data);
+
+      setSuccessMessage(`Regularization request for ${selectedMissedRecord.attendance_date} submitted successfully! HR will review your request.`);
+      setShowSuccessModal(true);
+      setShowRegularizationModal(false);
+      setSelectedMissedRecord(null);
+      setRegularizationTime('');
+      setRegularizationReason('');
+
+      await fetchMissedClockOuts();
+      await fetchAttendanceHistory();
+      setMessage({ type: '', text: '' });
+
+    } catch (error) {
+      console.error('❌ Error submitting regularization:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+
+      let errorMessage = 'Failed to submit request. ';
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      setMessage({
+        type: 'danger',
+        text: errorMessage
+      });
+
+      setTimeout(() => {
+        setMessage({ type: '', text: '' });
+      }, 5000);
+    } finally {
+      setSubmittingRequest(false);
+    }
+  };
+
+  // Add this function to check and recover active session
+  const recoverActiveSession = async () => {
+    try {
+      console.log('🔍 Checking for active session...');
+
+      // First check if there's an active session in local storage
+      const storedSession = loadSessionFromStorage();
+      if (storedSession) {
+        console.log('✅ Found stored session:', storedSession);
+        setActiveSession(storedSession);
+        return;
+      }
+
+      // If no stored session, check with server
+      const response = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
+      const serverSession = response.data.active_session;
+
+      if (serverSession) {
+        console.log('✅ Found active session on server:', serverSession);
+        setActiveSession(serverSession);
+        saveSessionToStorage(serverSession);
+        setHasClockedOutToday(false);
+      } else {
+        // Check if today's attendance has clock_in but no clock_out
+        const todayAttendance = response.data.attendance;
+        if (todayAttendance && todayAttendance.clock_in && !todayAttendance.clock_out) {
+          console.log('⚠️ Found attendance with clock_in but no clock_out, creating session...');
+
+          // Create a session for this attendance
+          const newSession = {
+            session_id: todayAttendance.session_id || 'recovered-' + Date.now(),
+            clock_in_time: todayAttendance.clock_in
+          };
+
+          setActiveSession(newSession);
+          saveSessionToStorage(newSession);
+          setHasClockedOutToday(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error recovering session:', error);
+    }
+  };
+
+  // Initial load effects - COMPLETE VERSION
+  useEffect(() => {
+    if (!user?.employeeId) return;
+
+    const initAttendance = async () => {
+      try {
+        console.log('🔄 Initializing attendance component...');
+
+        // First, load stored session from local storage
+        const stored = loadSessionFromStorage();
+        if (stored) {
+          console.log('📱 Found stored session:', stored);
+          setActiveSession(stored);
+        }
+
+        // Fetch today's attendance
+        await fetchTodayAttendance();
+
+        // Fetch missed clock-outs
+        await fetchMissedClockOuts();
+
+        // Recover active session if needed
+        await recoverActiveSession();
+
+        // Get current location
+        getCurrentLocation();
+
+        console.log('✅ Attendance initialization complete');
+      } catch (error) {
+        console.error('❌ Error during initialization:', error);
+      }
+    };
+
+    initAttendance();
+
+    // Set up timer for current time display
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+
+    // Set up beforeunload warning
+    const handleBeforeUnload = (e) => {
+      if (activeSession) {
+        e.preventDefault();
+        e.returnValue = 'You have an active session. Please clock out.';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // Cleanup function
+    return () => {
+      clearInterval(timer);
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [user]); // Only re-run when user changes
+
+  // Generate last 30 days attendance - FIXED HOURS CALCULATION
   const generateLast30DaysAttendance = (history) => {
     const completeHistory = [];
     const today = new Date();
-
-    const formatDateStr = (date) => {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-
     const todayStr = formatDateStr(today);
-
-    // Create map of existing records
     const historyMap = {};
+
     history.forEach(record => {
       if (record.attendance_date) {
-        let dateKey = record.attendance_date.includes('T') 
-          ? record.attendance_date.split('T')[0] 
-          : record.attendance_date;
-        
-        // Ensure late_display is set with proper format
+        let dateKey = record.attendance_date;
         if (record.late_minutes > 0 && !record.late_display) {
           record.late_display = formatLateTime(record.late_minutes);
         }
-        
         historyMap[dateKey] = record;
       }
     });
 
-    // Always use latest attendance state for today
     if (attendance && attendance.attendance_date === todayStr) {
       if (attendance.late_minutes > 0 && !attendance.late_display) {
         attendance.late_display = formatLateTime(attendance.late_minutes);
@@ -376,46 +584,63 @@ const Attendance = () => {
       historyMap[todayStr] = attendance;
     }
 
-    // Generate 30 days
     for (let i = 0; i < 30; i++) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
-
       const dateStr = formatDateStr(date);
       const dayOfWeek = date.getDay();
       const isToday = dateStr === todayStr;
       const isWeeklyOff = dayOfWeek === 0 || dayOfWeek === 6;
       const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
-
       const existingRecord = historyMap[dateStr];
 
       if (existingRecord) {
-        // Get late minutes and format display
         const lateMinutes = existingRecord.late_minutes || 0;
         let lateDisplay = existingRecord.late_display;
-        
-        // If late_display not set but late_minutes > 0, format it
-        if (lateMinutes > 0 && !lateDisplay) {
-          lateDisplay = formatLateTime(lateMinutes);
-          console.log(`Formatting late for ${dateStr}: ${lateMinutes} minutes -> ${lateDisplay}`);
-        }
-        
+        let clockOut = existingRecord.clock_out;
         let displayStatus = existingRecord.status;
         let totalHoursDisplay = existingRecord.total_hours_display;
         let totalHours = existingRecord.total_hours;
-        let clockOut = existingRecord.clock_out;
+        let currentHoursDisplay = null;
 
-        // If this is today and user is working, calculate current hours
-        if (isToday && existingRecord.clock_in && !existingRecord.clock_out) {
-          displayStatus = 'working';
-          clockOut = null;
-          const clockIn = new Date(existingRecord.clock_in);
-          const now = new Date();
-          const diffMinutes = (now - clockIn) / (1000 * 60);
-          const hours = Math.floor(diffMinutes / 60);
-          const minutes = Math.round(diffMinutes % 60);
-          totalHoursDisplay = `${hours}h ${minutes}m`;
-          totalHours = diffMinutes / 60;
+        // Calculate hours correctly from clock_in and clock_out
+        if (existingRecord.clock_in) {
+          if (existingRecord.clock_out) {
+            // For completed records, calculate hours from clock_in and clock_out
+            const clockIn = new Date(existingRecord.clock_in);
+            const clockOutDate = new Date(existingRecord.clock_out);
+
+            // Calculate difference in milliseconds
+            const diffMs = clockOutDate - clockIn;
+            const diffMinutes = diffMs / (1000 * 60);
+            const hours = Math.floor(diffMinutes / 60);
+            const minutes = Math.round(diffMinutes % 60);
+
+            // Format the display
+            totalHoursDisplay = `${hours}h ${minutes}m`;
+            totalHours = diffMinutes / 60;
+
+            console.log(`Hours calculation for ${dateStr}:`, {
+              clock_in: clockIn.toLocaleString(),
+              clock_out: clockOutDate.toLocaleString(),
+              diff_minutes: diffMinutes,
+              hours: hours,
+              minutes: minutes,
+              display: totalHoursDisplay
+            });
+          } else if (isToday) {
+            // For today's active session, calculate current hours
+            const clockIn = new Date(existingRecord.clock_in);
+            const now = new Date();
+            const diffMinutes = (now - clockIn) / (1000 * 60);
+            const hours = Math.floor(diffMinutes / 60);
+            const minutes = Math.round(diffMinutes % 60);
+            currentHoursDisplay = `${hours}h ${minutes}m`;
+            totalHoursDisplay = currentHoursDisplay;
+            totalHours = diffMinutes / 60;
+            displayStatus = 'working';
+            clockOut = null;
+          }
         }
 
         completeHistory.push({
@@ -430,16 +655,15 @@ const Attendance = () => {
           clock_out: clockOut,
           total_hours: totalHours,
           total_hours_display: totalHoursDisplay,
+          current_hours_display: currentHoursDisplay,
           status: displayStatus,
           late_minutes: lateMinutes,
-          late_display: lateDisplay
+          late_display: lateDisplay,
+          is_regularized: existingRecord.is_regularized || false
         });
       } else {
         let status = 'not_clocked';
-        if (isWeeklyOff) {
-          status = 'weekly_off';
-        }
-
+        if (isWeeklyOff) status = 'weekly_off';
         completeHistory.push({
           date: dateStr,
           attendance_date: dateStr,
@@ -450,28 +674,19 @@ const Attendance = () => {
           clock_out: null,
           total_hours: null,
           total_hours_display: null,
+          current_hours_display: null,
           status: status,
           late_minutes: 0,
           late_display: null,
-          isToday
+          isToday,
+          is_regularized: false
         });
       }
     }
-
-    // Log late records in final history
-    const lateRecords = completeHistory.filter(r => r.late_minutes > 0);
-    if (lateRecords.length > 0) {
-      console.log('🔴 Late records in final history:', lateRecords.map(r => ({
-        date: r.date,
-        late_minutes: r.late_minutes,
-        late_display: r.late_display
-      })));
-    }
-
     return completeHistory.sort((a, b) => b.date.localeCompare(a.date));
   };
 
-  // Calculate monthly statistics
+  // Calculate monthly statistics - FIXED
   const calculateMonthlyStats = (history) => {
     let present = 0;
     let absent = 0;
@@ -489,7 +704,9 @@ const Attendance = () => {
       } else if (record.status === 'present') {
         present++;
         workingDaysCount++;
-        if (record.total_hours) totalHours += parseFloat(record.total_hours);
+        if (record.total_hours) {
+          totalHours += parseFloat(record.total_hours);
+        }
         if (parseFloat(record.late_minutes) > 0) {
           lateDays++;
           totalLateMinutes += parseFloat(record.late_minutes);
@@ -497,7 +714,9 @@ const Attendance = () => {
       } else if (record.status === 'half_day') {
         halfDays++;
         workingDaysCount++;
-        if (record.total_hours) totalHours += parseFloat(record.total_hours);
+        if (record.total_hours) {
+          totalHours += parseFloat(record.total_hours);
+        }
         if (parseFloat(record.late_minutes) > 0) {
           lateDays++;
           totalLateMinutes += parseFloat(record.late_minutes);
@@ -507,11 +726,12 @@ const Attendance = () => {
       } else if (record.status === 'on_leave') {
         leaves++;
       } else if (record.status === 'working' && parseFloat(record.late_minutes) > 0) {
-        // Count working days with late as late days
         lateDays++;
         totalLateMinutes += parseFloat(record.late_minutes);
       }
     });
+
+    const averageHours = workingDaysCount > 0 ? Math.round((totalHours / workingDaysCount) * 10) / 10 : 0;
 
     setMonthlyStats({
       totalDays: history.length,
@@ -521,9 +741,15 @@ const Attendance = () => {
       weeklyOffDays: weeklyOff,
       leaves: leaves,
       totalHours: Math.round(totalHours * 10) / 10,
-      averageHours: workingDaysCount > 0 ? Math.round((totalHours / workingDaysCount) * 10) / 10 : 0,
+      averageHours: averageHours,
       lateDays: lateDays,
       totalLateMinutes: Math.round(totalLateMinutes * 10) / 10
+    });
+
+    console.log('Monthly stats calculated:', {
+      totalHours: Math.round(totalHours * 10) / 10,
+      averageHours: averageHours,
+      workingDaysCount: workingDaysCount
     });
   };
 
@@ -558,7 +784,6 @@ const Attendance = () => {
     });
   };
 
-  // Fetch attendance history
   const fetchAttendanceHistory = async () => {
     try {
       const today = new Date();
@@ -575,36 +800,58 @@ const Attendance = () => {
         return `${year}-${month}-${day}`;
       };
 
+      const startDateStr = formatDate(startDate);
+      const endDateStr = formatDate(endDate);
+
+      console.log('📊 Fetching attendance history for employee:', user.employeeId);
+      console.log('📅 Date range:', startDateStr, 'to', endDateStr);
+      console.log('🔗 URL:', API_ENDPOINTS.ATTENDANCE_EMPLOYEE_REPORT(user.employeeId, startDateStr, endDateStr));
+
       const response = await axios.get(
-        `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${formatDate(startDate)}&end=${formatDate(endDate)}&employee_id=${user.employeeId}`
+        API_ENDPOINTS.ATTENDANCE_EMPLOYEE_REPORT(user.employeeId, startDateStr, endDateStr)
       );
 
-      console.log('📊 Attendance history from API:', response.data.attendance?.length, 'records');
-      
-      // Log late records for debugging
-      const lateRecords = response.data.attendance?.filter(r => r.late_minutes > 0) || [];
-      console.log('📊 Late records from API:', lateRecords.map(r => ({
-        date: r.attendance_date,
-        late_minutes: r.late_minutes,
-        late_display: r.late_display
-      })));
-
+      console.log('✅ Attendance history response status:', response.status);
+      console.log('📊 Attendance records found:', response.data.attendance?.length || 0);
       let history = response.data.attendance || [];
       const completeHistory = generateLast30DaysAttendance(history);
-      
-      // Log final history late records
-      const finalLateRecords = completeHistory.filter(r => r.late_minutes > 0);
-      console.log('📊 Final late records in history:', finalLateRecords.map(r => ({
-        date: r.date,
-        late_minutes: r.late_minutes,
-        late_display: r.late_display
-      })));
-      
+
       setAttendanceHistory(completeHistory);
       calculateMonthlyStats(completeHistory);
       updateChartData(completeHistory);
+
     } catch (error) {
-      console.error('Error fetching attendance history:', error);
+      console.error('❌ Error fetching attendance history:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+
+      // Show user-friendly error message
+      if (error.response?.status === 403) {
+        setMessage({
+          type: 'warning',
+          text: 'Unable to fetch attendance history. Please contact HR if issue persists.'
+        });
+      } else if (error.response?.status === 401) {
+        setMessage({
+          type: 'danger',
+          text: 'Session expired. Please login again.'
+        });
+      } else if (error.response?.status === 404) {
+        setMessage({
+          type: 'warning',
+          text: 'Attendance report endpoint not found. Please contact administrator.'
+        });
+      } else {
+        setMessage({
+          type: 'danger',
+          text: error.response?.data?.message || 'Failed to fetch attendance history'
+        });
+      }
+
+      // Clear error message after 5 seconds
+      setTimeout(() => setMessage({ type: '', text: '' }), 5000);
+
+      // Set empty history to avoid UI errors
       const emptyHistory = generateLast30DaysAttendance([]);
       setAttendanceHistory(emptyHistory);
       calculateMonthlyStats(emptyHistory);
@@ -674,8 +921,7 @@ const Attendance = () => {
       console.log('✅ Clock-in response:', response.data);
 
       setMessage({ type: 'success', text: response.data.message });
-      
-      // Set attendance with late info
+
       const newAttendance = {
         clock_in: response.data.clock_in,
         late_minutes: response.data.late_minutes || 0,
@@ -746,6 +992,30 @@ const Attendance = () => {
   const handleManualClockOut = async () => {
     setShowExitWarning(false);
     await handleClockOut();
+  };
+
+  const handleOpenRegularizationModal = (record) => {
+    console.log('='.repeat(60));
+    console.log('🔍 Opening regularization modal for record:');
+    console.log('Record ID:', record.id);
+    console.log('Attendance Date:', record.attendance_date);
+    console.log('Clock In (raw):', record.clock_in);
+    console.log('Clock In (parsed):', new Date(record.clock_in).toLocaleString());
+
+    setSelectedMissedRecord(record);
+
+    // IMPORTANT: Use the attendance_date from the record, not today's date
+    // Parse the attendance_date string (format: "2026-03-24")
+    const [year, month, day] = record.attendance_date.split('-');
+
+    // Set default to 6:00 PM on that specific date
+    const defaultDateTime = `${year}-${month}-${day}T18:00`;
+
+    console.log('Default datetime set to:', defaultDateTime);
+    console.log('For date:', record.attendance_date);
+
+    setRegularizationTime(defaultDateTime);
+    setShowRegularizationModal(true);
   };
 
   // Get location badge
@@ -846,6 +1116,7 @@ const Attendance = () => {
     const stored = loadSessionFromStorage();
     if (stored) setActiveSession(stored);
     fetchTodayAttendance();
+    fetchMissedClockOuts();
     getCurrentLocation();
 
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -877,24 +1148,60 @@ const Attendance = () => {
     }
   }, [activeSession, location]);
 
-  // Debug effect to log attendance history late records
-  useEffect(() => {
-    const lateRecords = attendanceHistory.filter(r => r.late_minutes > 0);
-    if (lateRecords.length > 0) {
-      console.log('🔴 Late records in history:', lateRecords.map(r => ({
-        date: r.date,
-        late_display: r.late_display,
-        late_minutes: r.late_minutes
-      })));
-    }
-  }, [attendanceHistory]);
-
   return (
     <div className="p-2 p-md-3 p-lg-4" style={{ backgroundColor: '#f8f9fc', minHeight: '100vh' }}>
       <h5 className="mb-4 d-flex align-items-center">
         <FaClock className="me-2 text-primary" />
         Attendance Management
       </h5>
+
+      {/* Missed Clock-outs Alert with Regularization Button */}
+      {missedClockOuts.length > 0 && missedClockOuts.some(r => !r.is_regularized && !r.regularization_requested) && (
+        <Card className="mb-4 border-warning bg-warning bg-opacity-10">
+          <Card.Body className="p-3">
+            <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+              <div>
+                <FaExclamationTriangle className="text-warning me-2" size={20} />
+                <strong>Missed Clock-out Detected!</strong>
+                <div className="small text-muted mt-1">
+                  You have {missedClockOuts.filter(r => !r.is_regularized && !r.regularization_requested).length} incomplete attendance record(s):
+                </div>
+                <div className="mt-2">
+                  {missedClockOuts.filter(r => !r.is_regularized && !r.regularization_requested).map(record => (
+                    <Badge
+                      key={record.id}
+                      bg="light"
+                      text="dark"
+                      className="me-2 mb-1 p-2"
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => handleOpenRegularizationModal(record)}
+                    >
+                      <FaCalendarAlt className="me-1" size={10} />
+                      {record.attendance_date}
+                      <span className="ms-1 text-muted">
+                        (Clock-in: {record.clock_in ? new Date(record.clock_in).toLocaleTimeString() : 'N/A'})
+                      </span>
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              <Button
+                variant="warning"
+                size="sm"
+                onClick={() => {
+                  const firstMissed = missedClockOuts.find(r => !r.is_regularized && !r.regularization_requested);
+                  if (firstMissed) {
+                    handleOpenRegularizationModal(firstMissed);
+                  }
+                }}
+              >
+                <FaRegClock className="me-2" />
+                Request Regularization
+              </Button>
+            </div>
+          </Card.Body>
+        </Card>
+      )}
 
       {/* Current Status Card */}
       <Card className="mb-4 border-0 shadow-sm">
@@ -1061,7 +1368,7 @@ const Attendance = () => {
                   size="sm"
                   onClick={() => setActiveTab('daily')}
                   className="me-2"
-                  style={{ 
+                  style={{
                     borderBottom: activeTab === 'daily' ? '3px solid #0d6efd' : 'none',
                     borderRadius: '4px 4px 0 0'
                   }}
@@ -1072,7 +1379,7 @@ const Attendance = () => {
                   variant={activeTab === 'chart' ? 'primary' : 'light'}
                   size="sm"
                   onClick={() => setActiveTab('chart')}
-                  style={{ 
+                  style={{
                     borderBottom: activeTab === 'chart' ? '3px solid #0d6efd' : 'none',
                     borderRadius: '4px 4px 0 0'
                   }}
@@ -1097,73 +1404,78 @@ const Attendance = () => {
                       </thead>
                       <tbody>
                         {attendanceHistory.map((record, index) => {
-                          // Calculate late display for this record in Hours/Minutes/Seconds format
                           const hasLate = record.late_minutes > 0;
-                          const lateDisplayText = hasLate ? (record.late_display || formatLateTime(record.late_minutes)) : null;
-                          
+                          const today = new Date().toISOString().split('T')[0];
+                          const isToday = record.attendance_date === today;
+
                           return (
-                            <tr
-                              key={index}
-                              className={`
-                                ${record.isWeeklyOff ? 'bg-light' : ''} 
-                                ${record.isToday ? 'table-primary fw-bold' : ''}
-                                ${hasLate ? 'table-danger' : ''}
-                              `}
-                            >
+                            <tr key={index} className={`
+                ${record.isWeeklyOff ? 'bg-light' : ''} 
+                ${record.isToday ? 'table-primary fw-bold' : ''}
+                ${hasLate ? 'table-danger' : ''}
+                ${record.is_regularized ? 'table-info' : ''}
+            `}>
+                              {/* Date Column */}
                               <td className="small">
                                 <div>
                                   <span className="fw-semibold">{formatShortDate(record.date)}</span>
                                   {record.isToday && <Badge bg="primary" className="ms-1" pill>Today</Badge>}
+                                  {record.is_regularized && <Badge bg="info" className="ms-1" pill>Reg</Badge>}
                                 </div>
                               </td>
+
+                              {/* Day Column */}
                               <td className="small d-none d-sm-table-cell">
                                 <div>
                                   {record.dayName}
                                   {record.isWeeklyOff && <Badge bg="secondary" className="ms-1" pill>OFF</Badge>}
                                 </div>
                               </td>
+
+                              {/* Clock In Column */}
                               <td className="small">
                                 {record.isWeeklyOff ? (
                                   <span className="text-muted">---</span>
                                 ) : record.clock_in ? (
                                   <div>
                                     <span className="text-nowrap">{formatTime(record.clock_in)}</span>
-                                    {/* Late mark shown below clock-in time in Hours/Minutes/Seconds format */}
-                                    {hasLate && lateDisplayText && (
-                                      <div className="text-danger small mt-1" style={{ fontSize: '11px', fontWeight: '500' }}>
-                                        <FaExclamationTriangle className="me-1" size={10} />
-                                        Late by {lateDisplayText}
-                                      </div>
-                                    )}
                                   </div>
                                 ) : (
                                   <span className="text-muted">---</span>
                                 )}
                               </td>
+
+                              {/* Clock Out Column */}
                               <td className="small">
                                 {record.isWeeklyOff ? (
                                   <span className="text-muted">---</span>
                                 ) : record.clock_out ? (
                                   <span className="text-nowrap">{formatTime(record.clock_out)}</span>
-                                ) : record.clock_in ? (
+                                ) : record.clock_in && isToday ? (
                                   <Badge bg="info" pill size="sm">Working</Badge>
+                                ) : record.clock_in && !record.clock_out && !isToday ? (
+                                  <Badge bg="danger" pill size="sm">Missed</Badge>
                                 ) : (
                                   <span className="text-muted">---</span>
                                 )}
                               </td>
+
+                              {/* Hours Column */}
                               <td className="small fw-bold">
                                 {record.isWeeklyOff ? (
                                   <span className="text-muted">-</span>
                                 ) : record.total_hours_display ? (
                                   <span className="text-nowrap">{record.total_hours_display}</span>
                                 ) : record.total_hours ? (
-                                  <span className="text-nowrap">{record.total_hours}h</span>
-                                ) : record.clock_in ? (
-                                  <Badge bg="info" pill size="sm">Active</Badge>
+                                  <span className="text-nowrap">{record.total_hours.toFixed(1)}h</span>
+                                ) : record.clock_in && !record.clock_out && isToday ? (
+                                  <span className="text-nowrap text-info">{record.current_hours_display || '0h 0m'}</span>
                                 ) : (
                                   '-'
                                 )}
                               </td>
+
+                              {/* Status Column */}
                               <td className="small">
                                 <div className="text-truncate" style={{ maxWidth: '120px' }}>
                                   {getAttendanceStatusBadge(record)}
@@ -1228,6 +1540,133 @@ const Attendance = () => {
           </Card>
         </Col>
       </Row>
+
+      {/* Regularization Modal */}
+      <Modal show={showRegularizationModal} onHide={() => {
+        setShowRegularizationModal(false);
+        setSelectedMissedRecord(null);
+        setRegularizationTime('');
+        setRegularizationReason('');
+      }} centered size="lg">
+        <Modal.Header closeButton className="bg-warning">
+          <Modal.Title className="h6">
+            <FaRegClock className="me-2" />
+            Request Regularization - {selectedMissedRecord?.attendance_date}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-4">
+          {selectedMissedRecord && (
+            <>
+              {/* Show the actual missed record details */}
+              <div className="mb-4 p-3 bg-light rounded border">
+                <div className="d-flex align-items-center mb-2">
+                  <FaInfoCircle className="text-primary me-2" />
+                  <strong className="small">Missed Clock-out Record</strong>
+                </div>
+                <div className="row g-2">
+                  <div className="col-12">
+                    <div className="small text-muted">Attendance Date</div>
+                    <div className="fw-semibold">
+                      <FaCalendarAlt className="me-2 text-primary" size={12} />
+                      {selectedMissedRecord.attendance_date}
+                    </div>
+                  </div>
+                  <div className="col-12">
+                    <div className="small text-muted">Clock In Time</div>
+                    <div className="fw-semibold text-success">
+                      <FaClock className="me-2" size={12} />
+                      {selectedMissedRecord.clock_in_display || new Date(selectedMissedRecord.clock_in).toLocaleString()}
+                    </div>
+                  </div>
+                  {selectedMissedRecord.shift_timing && (
+                    <div className="col-12">
+                      <div className="small text-muted">Expected Shift</div>
+                      <Badge bg="info" className="mt-1">
+                        {selectedMissedRecord.shift_timing}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Date/Time selection for clock-out */}
+              <div className="mb-3">
+                <label className="form-label fw-semibold">Select Clock Out Time *</label>
+                <input
+                  type="datetime-local"
+                  className="form-control"
+                  value={regularizationTime}
+                  onChange={(e) => {
+                    const selectedValue = e.target.value;
+                    console.log('Selected datetime (local):', selectedValue);
+                    setRegularizationTime(selectedValue);
+                  }}
+                  required
+                />
+                <small className="text-muted">
+                  Select the time you actually left work on {selectedMissedRecord?.attendance_date}
+                </small>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label fw-semibold">Reason (Optional)</label>
+                <textarea
+                  className="form-control"
+                  rows="3"
+                  placeholder="e.g., Forgot to clock out, System issue, Network problem, etc."
+                  value={regularizationReason}
+                  onChange={(e) => setRegularizationReason(e.target.value)}
+                />
+              </div>
+
+              <Alert variant="info" className="small">
+                <FaInfoCircle className="me-2" />
+                <strong>Note:</strong> Your request will be reviewed by HR. Once approved, your attendance will be updated with the correct clock-out time.
+              </Alert>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" size="sm" onClick={() => {
+            setShowRegularizationModal(false);
+            setSelectedMissedRecord(null);
+          }}>
+            Cancel
+          </Button>
+          <Button
+            variant="warning"
+            size="sm"
+            onClick={handleRegularizationRequest}
+            disabled={submittingRequest || !regularizationTime}
+          >
+            {submittingRequest ? (
+              <>
+                <Spinner size="sm" animation="border" className="me-2" />
+                Submitting...
+              </>
+            ) : (
+              <>
+                <FaRegClock className="me-2" />
+                Submit Request
+              </>
+            )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* Success Modal */}
+      <Modal show={showSuccessModal} onHide={() => setShowSuccessModal(false)} centered>
+        <Modal.Header closeButton className="bg-success text-white">
+          <Modal.Title className="h6">Request Submitted</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-4 text-center">
+          <FaCheckCircle className="text-success mb-3" size={50} />
+          <p>{successMessage}</p>
+          <Button variant="success" size="sm" onClick={() => setShowSuccessModal(false)}>
+            Close
+          </Button>
+        </Modal.Body>
+      </Modal>
 
       {/* Exit Warning Modal */}
       <Modal show={showExitWarning} onHide={() => setShowExitWarning(false)} centered>
