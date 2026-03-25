@@ -38,8 +38,6 @@ const EmployeeList = () => {
     }
   }, [employeeUpdate]);
 
-  // EmployeeList.jsx - Updated fetchEmployees to get only active employees
-
   const fetchEmployees = async () => {
     try {
       setLoading(true);
@@ -319,20 +317,28 @@ const EmployeeList = () => {
           </Badge>
         </Card.Header>
         <Card.Body className="p-0">
-          {/* Table with Vertical Scroll */}
-          <div className="table-responsive" style={{ maxHeight: '230px', overflowY: 'auto' }}>
+          {/* Table with Vertical Scroll - Increased height to fill page */}
+          <div 
+            className="table-responsive" 
+            style={{ 
+              maxHeight: 'calc(100vh - 250px)', 
+              minHeight: '400px',
+              overflowY: 'auto',
+              overflowX: 'auto'
+            }}
+          >
             <Table hover striped className="mb-0 small">
               <thead className="bg-light sticky-top" style={{ top: 0, zIndex: 10 }}>
                 <tr>
-                  <th className="text-nowrap text-dark fw-normal text-center">Sr No</th>
-                  <th className="text-nowrap text-dark fw-normal">Employee ID</th>
-                  <th className="text-nowrap text-dark fw-normal">Name</th>
-                  <th className="text-nowrap text-dark fw-normal d-none d-md-table-cell">Department</th>
-                  <th className="text-nowrap text-dark fw-normal d-none d-lg-table-cell">Designation</th>
-                  <th className="text-nowrap text-dark fw-normal d-none d-sm-table-cell">Employment Type</th>
-                  <th className="text-nowrap text-dark fw-normal d-none d-xl-table-cell">Joining Date</th>
-                  <th className="text-nowrap text-dark fw-normal">Actions</th>
-                </tr>
+                  <th className="text-nowrap text-dark fw-normal text-center" style={{ width: '5%' }}>Sr No</th>
+                  <th className="text-nowrap text-dark fw-normal" style={{ width: '12%' }}>Employee ID</th>
+                  <th className="text-nowrap text-dark fw-normal" style={{ width: '15%' }}>Name</th>
+                  <th className="text-nowrap text-dark fw-normal d-none d-md-table-cell" style={{ width: '12%' }}>Department</th>
+                  <th className="text-nowrap text-dark fw-normal d-none d-lg-table-cell" style={{ width: '15%' }}>Designation</th>
+                  <th className="text-nowrap text-dark fw-normal d-none d-sm-table-cell" style={{ width: '10%' }}>Employment Type</th>
+                  <th className="text-nowrap text-dark fw-normal d-none d-xl-table-cell" style={{ width: '10%' }}>Joining Date</th>
+                  <th className="text-nowrap text-dark fw-normal text-center" style={{ width: '15%' }}>Actions</th>
+                 </tr>
               </thead>
               <tbody>
                 {employees.length > 0 ? (
@@ -344,13 +350,13 @@ const EmployeeList = () => {
                           {emp.employee_id}
                         </Badge>
                       </td>
-                      <td className="text-truncate" style={{ maxWidth: '100px' }} title={`${emp.first_name} ${emp.middle_name || ''} ${emp.last_name}`}>
+                      <td className="text-truncate" style={{ maxWidth: '150px' }} title={`${emp.first_name} ${emp.middle_name || ''} ${emp.last_name}`}>
                         {emp.first_name} {emp.middle_name} {emp.last_name}
                       </td>
-                      <td className="text-truncate d-none d-md-table-cell" style={{ maxWidth: '100px' }} title={emp.department}>
+                      <td className="text-truncate d-none d-md-table-cell" style={{ maxWidth: '120px' }} title={emp.department}>
                         {emp.department}
                       </td>
-                      <td className="text-truncate d-none d-lg-table-cell" style={{ maxWidth: '100px' }} title={emp.designation}>
+                      <td className="text-truncate d-none d-lg-table-cell" style={{ maxWidth: '150px' }} title={emp.designation}>
                         {emp.designation}
                       </td>
                       <td className="d-none d-sm-table-cell">
@@ -362,7 +368,7 @@ const EmployeeList = () => {
                         {formatDate(emp.joining_date)}
                       </td>
                       <td>
-                        <div className="d-flex gap-2 gap-md-3 align-items-center">
+                        <div className="d-flex gap-2 gap-md-3 align-items-center justify-content-center flex-wrap">
                           {/* View Profile Icon */}
                           <FaEye
                             size={14}
@@ -425,6 +431,16 @@ const EmployeeList = () => {
               </tbody>
             </Table>
           </div>
+          
+          {/* Optional: Show scroll indicator when there are many rows */}
+          {employees.length > 15 && (
+            <div className="text-center py-1 bg-light border-top">
+              <small className="text-muted">
+                <FaEye size={10} className="me-1" />
+                Scroll to view all {employees.length} employees
+              </small>
+            </div>
+          )}
         </Card.Body>
       </Card>
 

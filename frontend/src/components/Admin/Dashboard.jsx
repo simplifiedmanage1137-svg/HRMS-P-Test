@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Table, Badge, Spinner, Alert, Form, Button,
-  Modal, ButtonGroup
+  Modal, ButtonGroup, InputGroup
 } from 'react-bootstrap';
 import {
   FaUsers,
@@ -29,7 +29,8 @@ import {
   FaBuilding,
   FaUserGraduate,
   FaChartBar,
-  FaFileAlt
+  FaFileAlt,
+  FaTrash
 } from 'react-icons/fa';
 import { Line, Doughnut, Bar } from 'react-chartjs-2';
 import {
@@ -63,7 +64,7 @@ ChartJS.register(
   Filler
 );
 
-// Regularization Requests Component (Inline for completeness)
+// Regularization Requests Component
 const RegularizationRequests = ({ onRequestCountChange }) => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -228,7 +229,6 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
   };
 
   const filteredRequests = getFilteredRequests();
-  const pendingCount = requests.filter(r => r.status === 'pending').length;
 
   if (loading) {
     return (
@@ -311,7 +311,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
                     <th className="fw-normal">Requested Clock Out</th>
                     <th className="fw-normal">Status</th>
                     <th className="fw-normal text-center">Actions</th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody>
                   {filteredRequests.map((request, index) => (
@@ -659,10 +659,13 @@ const AdminDashboard = () => {
   const [sortBy, setSortBy] = useState('name');
   const [filterDepartment, setFilterDepartment] = useState('all');
   const [todayAttendance, setTodayAttendance] = useState([]);
+  const [filteredAttendance, setFilteredAttendance] = useState([]);
+  const [filteredLeaveRequests, setFilteredLeaveRequests] = useState([]);
+  const [attendanceSearchTerm, setAttendanceSearchTerm] = useState('');
+  const [leaveSearchTerm, setLeaveSearchTerm] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
   const [departmentStats, setDepartmentStats] = useState({});
   const [lastUpdated, setLastUpdated] = useState(new Date());
-  const [autoRefresh, setAutoRefresh] = useState(true);
   const [totalEmployees, setTotalEmployees] = useState(0);
   const [activeTab, setActiveTab] = useState('overview');
   const [regularizationCount, setRegularizationCount] = useState(0);
@@ -676,11 +679,8 @@ const AdminDashboard = () => {
   const [allUpcomingAnniversaries, setAllUpcomingAnniversaries] = useState([]);
   const [displayBirthdays, setDisplayBirthdays] = useState([]);
   const [displayAnniversaries, setDisplayAnniversaries] = useState([]);
-  const [showAllBirthdays, setShowAllBirthdays] = useState(false);
-  const [showAllAnniversaries, setShowAllAnniversaries] = useState(false);
 
   // Chart data states
-  const [attendanceTrend, setAttendanceTrend] = useState([]);
   const [departmentChartData, setDepartmentChartData] = useState({
     labels: [],
     datasets: [{
@@ -694,16 +694,53 @@ const AdminDashboard = () => {
     fetchDashboardData();
     fetchTodayEvents();
 
-    const timer = setInterval(() => {
-      if (autoRefresh) {
-        refreshAttendanceData();
-        refreshLeaveRequests();
-        fetchTodayEvents();
-      }
+    // Only Live Attendance Feed auto-refreshes every 60 seconds
+    const attendanceInterval = setInterval(() => {
+      refreshAttendanceData();
+    }, 60000);
+
+    // Refresh leave requests every 30 seconds
+    const leaveInterval = setInterval(() => {
+      refreshLeaveRequests();
     }, 30000);
 
-    return () => clearInterval(timer);
-  }, [autoRefresh]);
+    return () => {
+      clearInterval(attendanceInterval);
+      clearInterval(leaveInterval);
+    };
+  }, []);
+
+  // Filter attendance based on search term
+  useEffect(() => {
+    if (!attendanceSearchTerm.trim()) {
+      setFilteredAttendance(todayAttendance);
+    } else {
+      const searchLower = attendanceSearchTerm.toLowerCase();
+      const filtered = todayAttendance.filter(att => 
+        att.first_name?.toLowerCase().includes(searchLower) ||
+        att.last_name?.toLowerCase().includes(searchLower) ||
+        att.employee_id?.toLowerCase().includes(searchLower) ||
+        `${att.first_name} ${att.last_name}`.toLowerCase().includes(searchLower)
+      );
+      setFilteredAttendance(filtered);
+    }
+  }, [attendanceSearchTerm, todayAttendance]);
+
+  // Filter leave requests based on search term
+  useEffect(() => {
+    if (!leaveSearchTerm.trim()) {
+      setFilteredLeaveRequests(leaveRequests);
+    } else {
+      const searchLower = leaveSearchTerm.toLowerCase();
+      const filtered = leaveRequests.filter(leave => 
+        leave.first_name?.toLowerCase().includes(searchLower) ||
+        leave.last_name?.toLowerCase().includes(searchLower) ||
+        leave.employee_id?.toLowerCase().includes(searchLower) ||
+        `${leave.first_name} ${leave.last_name}`.toLowerCase().includes(searchLower)
+      );
+      setFilteredLeaveRequests(filtered);
+    }
+  }, [leaveSearchTerm, leaveRequests]);
 
   const fetchDashboardData = async () => {
     try {
@@ -831,6 +868,7 @@ const AdminDashboard = () => {
       const attendanceRes = await axios.get(`${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${today}&end=${today}`);
       const attendanceData = attendanceRes.data.attendance || [];
       setTodayAttendance(attendanceData);
+      setFilteredAttendance(attendanceData);
       updateStats(attendanceData);
       setLastUpdated(new Date());
     } catch (error) {
@@ -841,7 +879,9 @@ const AdminDashboard = () => {
   const refreshLeaveRequests = async () => {
     try {
       const leavesRes = await axios.get(API_ENDPOINTS.LEAVES);
-      setLeaveRequests(leavesRes.data.filter(leave => leave.status === 'pending'));
+      const pendingLeaves = leavesRes.data.filter(leave => leave.status === 'pending');
+      setLeaveRequests(pendingLeaves);
+      setFilteredLeaveRequests(pendingLeaves);
     } catch (error) {
       console.error('Error refreshing leave requests:', error);
     }
@@ -1012,9 +1052,6 @@ const AdminDashboard = () => {
           <p className="text-muted mb-0 small d-flex align-items-center flex-wrap">
             <FaClock className="me-1" size={12} />
             <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
-            <Button variant="link" size="sm" className="ms-2 p-0 text-decoration-none" onClick={() => { refreshAttendanceData(); refreshLeaveRequests(); fetchTodayEvents(); fetchUpcomingEvents(); }}>
-              <FaSyncAlt size={12} className="text-primary" />
-            </Button>
           </p>
         </div>
         <div className="d-flex gap-2">
@@ -1022,7 +1059,6 @@ const AdminDashboard = () => {
             <FaDownload className="me-1" size={12} />
             Export
           </Button>
-          <Form.Check type="switch" id="auto-refresh" label="Auto-refresh" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="mb-0" />
         </div>
       </div>
 
@@ -1190,14 +1226,38 @@ const AdminDashboard = () => {
             </Col>
           </Row>
 
-          {/* Live Attendance Feed */}
+          {/* Live Attendance Feed with Search */}
           <Card className="mb-4 border-0 shadow-sm">
             <Card.Header className="bg-light d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center py-3 gap-2">
               <h5 className="mb-0 text-dark d-flex align-items-center">
                 <FaClock className="me-2 text-dark" />
                 <span>Live Attendance Feed</span>
               </h5>
-              <Badge bg="dark" className="px-3 py-2 ms-0 ms-sm-auto">{todayAttendance.length} Records</Badge>
+              <div className="d-flex gap-2">
+                <InputGroup size="sm" style={{ width: '250px' }}>
+                  <InputGroup.Text>
+                    <FaSearch size={12} />
+                  </InputGroup.Text>
+                  <Form.Control
+                    type="text"
+                    placeholder="Search by name or ID..."
+                    value={attendanceSearchTerm}
+                    onChange={(e) => setAttendanceSearchTerm(e.target.value)}
+                  />
+                  {attendanceSearchTerm && (
+                    <Button
+                      variant="outline-secondary"
+                      onClick={() => setAttendanceSearchTerm('')}
+                      size="sm"
+                    >
+                      <FaTimesCircle size={12} />
+                    </Button>
+                  )}
+                </InputGroup>
+                <Badge bg="dark" className="px-3 py-2">
+                  {filteredAttendance.length} / {todayAttendance.length} Records
+                </Badge>
+              </div>
             </Card.Header>
             <Card.Body className="p-0">
               <div className="table-responsive" style={{ maxHeight: '300px', overflowY: 'auto' }}>
@@ -1213,25 +1273,38 @@ const AdminDashboard = () => {
                      </tr>
                   </thead>
                   <tbody>
-                    {todayAttendance.length > 0 ? (
-                      todayAttendance.map((att, index) => (
-                        <tr key={index}>
+                    {filteredAttendance.length > 0 ? (
+                      filteredAttendance.map((att, index) => (
+                        <tr key={att.id || index}>
                           <td className="text-center">{index + 1}</td>
                           <td className="small">
-                            <div className="text-truncate" style={{ maxWidth: '120px' }}>{att.first_name} {att.last_name}</div>
+                            <div className="text-truncate" style={{ maxWidth: '120px' }}>
+                              {att.first_name} {att.last_name}
+                            </div>
                             <small className="text-muted">{att.employee_id}</small>
                           </td>
-                          <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>{att.department}</td>
+                          <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>
+                            {att.department}
+                          </td>
                           <td className={`small ${att.clock_in ? 'text-success' : 'text-muted'}`}>
                             {formatTime(att.clock_in)}
                             {att.late_minutes > 0 && <Badge bg="danger" className="ms-1" pill>Late</Badge>}
                           </td>
-                          <td className={`small d-none d-sm-table-cell ${att.clock_out ? 'text-danger' : 'text-muted'}`}>{formatTime(att.clock_out)}</td>
+                          <td className={`small d-none d-sm-table-cell ${att.clock_out ? 'text-danger' : 'text-muted'}`}>
+                            {formatTime(att.clock_out)}
+                          </td>
                           <td>{getStatusBadge(att)}</td>
                         </tr>
                       ))
                     ) : (
-                      <tr><td colSpan="6" className="text-center py-4"><FaClock size={30} className="text-muted mb-2 opacity-50" /><p className="text-muted mb-0">No attendance records for today</p></td></tr>
+                      <tr>
+                        <td colSpan="6" className="text-center py-4">
+                          <FaClock size={30} className="text-muted mb-2 opacity-50" />
+                          <p className="text-muted mb-0">
+                            {attendanceSearchTerm ? 'No matching attendance records found' : 'No attendance records for today'}
+                          </p>
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </Table>
@@ -1239,11 +1312,38 @@ const AdminDashboard = () => {
             </Card.Body>
           </Card>
 
-          {/* Pending Leave Requests */}
+          {/* Pending Leave Requests with Search */}
           <Card className="mb-4 border-0 shadow-sm">
             <Card.Header className="bg-light d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center py-3 gap-2">
-              <h5 className="mb-0 text-dark d-flex align-items-center"><FaCalendarAlt className="me-2" /><span>Pending Leave Requests</span></h5>
-              <Badge bg="light" text="dark" className="px-3 py-2 ms-0 ms-sm-auto">{leaveRequests.length} Pending</Badge>
+              <h5 className="mb-0 text-dark d-flex align-items-center">
+                <FaCalendarAlt className="me-2" />
+                <span>Pending Leave Requests</span>
+              </h5>
+              <div className="d-flex gap-2">
+                <InputGroup size="sm" style={{ width: '250px' }}>
+                  <InputGroup.Text>
+                    <FaSearch size={12} />
+                  </InputGroup.Text>
+                  <Form.Control
+                    type="text"
+                    placeholder="Search by name or ID..."
+                    value={leaveSearchTerm}
+                    onChange={(e) => setLeaveSearchTerm(e.target.value)}
+                  />
+                  {leaveSearchTerm && (
+                    <Button
+                      variant="outline-secondary"
+                      onClick={() => setLeaveSearchTerm('')}
+                      size="sm"
+                    >
+                      <FaTimesCircle size={12} />
+                    </Button>
+                  )}
+                </InputGroup>
+                <Badge bg="light" text="dark" className="px-3 py-2">
+                  {filteredLeaveRequests.length} / {leaveRequests.length} Pending
+                </Badge>
+              </div>
             </Card.Header>
             <Card.Body className="p-0">
               <div className="table-responsive" style={{ maxHeight: '200px', overflowY: 'auto' }}>
@@ -1259,25 +1359,38 @@ const AdminDashboard = () => {
                      </tr>
                   </thead>
                   <tbody>
-                    {leaveRequests.length > 0 ? (
-                      leaveRequests.map((leave, index) => (
+                    {filteredLeaveRequests.length > 0 ? (
+                      filteredLeaveRequests.map((leave, index) => (
                         <tr key={leave.id}>
                           <td className="text-center">{index + 1}</td>
                           <td className="small">
-                            <div className="text-truncate" style={{ maxWidth: '100px' }}>{leave.first_name} {leave.last_name}</div>
+                            <div className="text-truncate" style={{ maxWidth: '100px' }}>
+                              {leave.first_name} {leave.last_name}
+                            </div>
                             <small className="text-muted">{leave.employee_id}</small>
                           </td>
-                          <td className="d-none d-md-table-cell"><Badge bg="secondary">{leave.leave_type}</Badge></td>
+                          <td className="d-none d-md-table-cell">
+                            <Badge bg="secondary">{leave.leave_type}</Badge>
+                          </td>
                           <td className="small">
                             <span className="text-nowrap">{new Date(leave.start_date).toLocaleDateString()}</span>
-                            {leave.start_date !== leave.end_date && <span className="text-nowrap d-block">- {new Date(leave.end_date).toLocaleDateString()}</span>}
+                            {leave.start_date !== leave.end_date && (
+                              <span className="text-nowrap d-block">- {new Date(leave.end_date).toLocaleDateString()}</span>
+                            )}
                           </td>
                           <td>{leave.days_count || 1}</td>
                           <td><Badge bg="warning">Pending</Badge></td>
                         </tr>
                       ))
                     ) : (
-                      <tr><td colSpan="6" className="text-center py-4"><FaCalendarAlt size={30} className="text-muted mb-2 opacity-50" /><p className="text-muted mb-0">No pending leave requests</p></td></tr>
+                      <tr>
+                        <td colSpan="6" className="text-center py-4">
+                          <FaCalendarAlt size={30} className="text-muted mb-2 opacity-50" />
+                          <p className="text-muted mb-0">
+                            {leaveSearchTerm ? 'No matching leave requests found' : 'No pending leave requests'}
+                          </p>
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </Table>
@@ -1288,7 +1401,10 @@ const AdminDashboard = () => {
           {/* Employee Leave Balances */}
           <Card className="mb-4 border-0 shadow-sm">
             <Card.Header className="bg-white d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center py-3 gap-2">
-              <h5 className="mb-0 d-flex align-items-center"><FaBalanceScale className="me-2 text-dark" /><span>Employee Leave Balances</span></h5>
+              <h5 className="mb-0 d-flex align-items-center">
+                <FaBalanceScale className="me-2 text-dark" />
+                <span>Employee Leave Balances</span>
+              </h5>
               <div className="d-flex gap-2">
                 <Badge bg="info" className="px-3 py-2">Avg: {averageLeavesPerEmployee} days</Badge>
                 <Badge bg="warning" className="px-3 py-2">Low Balance: {employeesWithLowBalance}</Badge>
@@ -1299,13 +1415,22 @@ const AdminDashboard = () => {
                 <Col xs={12} md={4}>
                   <div className="d-flex align-items-center bg-light rounded-3 p-1">
                     <FaSearch className="ms-2 text-muted" size={14} />
-                    <Form.Control type="text" placeholder="Search by name, ID, department..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="border-0 bg-transparent" size="sm" />
+                    <Form.Control
+                      type="text"
+                      placeholder="Search by name, ID, department..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="border-0 bg-transparent"
+                      size="sm"
+                    />
                   </div>
                 </Col>
                 <Col xs={6} md={3}>
                   <Form.Select size="sm" value={filterDepartment} onChange={(e) => setFilterDepartment(e.target.value)}>
                     <option value="all">All Departments</option>
-                    {departments.filter(d => d !== 'all').map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                    {departments.filter(d => d !== 'all').map(dept => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
                   </Form.Select>
                 </Col>
                 <Col xs={6} md={3}>
@@ -1325,7 +1450,7 @@ const AdminDashboard = () => {
                       <th className="fw-normal d-none d-md-table-cell">Department</th>
                       <th className="fw-normal">Available</th>
                       <th className="fw-normal d-none d-sm-table-cell">Status</th>
-                     </tr>
+                    </tr>
                   </thead>
                   <tbody>
                     {filteredEmployees.length > 0 ? (
@@ -1336,19 +1461,33 @@ const AdminDashboard = () => {
                           <tr key={emp.id}>
                             <td className="text-center">{index + 1}</td>
                             <td className="small">
-                              <div className="text-truncate" style={{ maxWidth: '120px' }}>{emp.first_name} {emp.last_name}</div>
+                              <div className="text-truncate" style={{ maxWidth: '120px' }}>
+                                {emp.first_name} {emp.last_name}
+                              </div>
                               <small className="text-muted">{emp.employee_id}</small>
                             </td>
-                            <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>{emp.department}</td>
+                            <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>
+                              {emp.department}
+                            </td>
                             <td><Badge bg={statusColor} pill>{available.toFixed(1)}</Badge></td>
                             <td className="d-none d-sm-table-cell">
-                              {available <= 0 ? <Badge bg="danger" pill>No Leaves</Badge> : available < 3 ? <Badge bg="warning" pill>Low</Badge> : <Badge bg="success" pill>Good</Badge>}
+                              {available <= 0 ? (
+                                <Badge bg="danger" pill>No Leaves</Badge>
+                              ) : available < 3 ? (
+                                <Badge bg="warning" pill>Low</Badge>
+                              ) : (
+                                <Badge bg="success" pill>Good</Badge>
+                              )}
                             </td>
                           </tr>
                         );
                       })
                     ) : (
-                      <tr><td colSpan="5" className="text-center py-4"><p className="text-muted mb-0">No employees found</p></td></tr>
+                      <tr>
+                        <td colSpan="5" className="text-center py-4">
+                          <p className="text-muted mb-0">No employees found</p>
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </Table>
