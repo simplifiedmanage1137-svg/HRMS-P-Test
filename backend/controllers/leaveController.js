@@ -6,7 +6,7 @@ const supabase = require('../config/supabase');
 exports.getLeaveBalance = async (req, res) => {
     try {
         const { employee_id } = req.params;
-        
+
         console.log('📊 Fetching leave balance for employee:', employee_id);
 
         // Get employee details first
@@ -21,20 +21,20 @@ exports.getLeaveBalance = async (req, res) => {
         const joiningDate = new Date(employee.joining_date);
         const today = new Date();
         const currentYear = today.getFullYear();
-        
+
         // Calculate months completed since joining
         let totalMonthsCompleted = (today.getFullYear() - joiningDate.getFullYear()) * 12;
         totalMonthsCompleted += (today.getMonth() - joiningDate.getMonth());
-        
+
         if (today.getDate() < joiningDate.getDate()) {
             totalMonthsCompleted -= 1;
         }
-        
+
         totalMonthsCompleted = Math.max(0, totalMonthsCompleted);
-        
+
         // Check probation status (6 months)
         const isEligible = totalMonthsCompleted >= 6;
-        
+
         // Calculate eligible from date
         const eligibleFromDate = new Date(joiningDate);
         eligibleFromDate.setMonth(eligibleFromDate.getMonth() + 6);
@@ -53,12 +53,12 @@ exports.getLeaveBalance = async (req, res) => {
         // If no balance for current year, create it
         if (!balance) {
             console.log(`📝 Creating new leave balance for ${employee_id} for year ${currentYear}`);
-            
+
             // Calculate how many months in current year are completed
             const monthsInCurrentYear = today.getMonth() + 1;
             const daysInCurrentMonth = today.getDate();
             const lastDayOfMonth = new Date(currentYear, today.getMonth() + 1, 0).getDate();
-            
+
             // Count completed months (full months only)
             let completedMonthsInYear = 0;
             if (daysInCurrentMonth === lastDayOfMonth) {
@@ -66,10 +66,10 @@ exports.getLeaveBalance = async (req, res) => {
             } else {
                 completedMonthsInYear = Math.max(0, monthsInCurrentYear - 1);
             }
-            
+
             // Calculate accrued leaves (1.5 per month)
             const totalAccrued = completedMonthsInYear * 1.5;
-            
+
             // Get used leaves from current year
             const { data: usedLeaves, error: usedError } = await supabase
                 .from('leaves')
@@ -200,14 +200,14 @@ exports.applyLeave = async (req, res) => {
         // Calculate months completed
         const joiningDate = new Date(employee.joining_date);
         const today = new Date();
-        
+
         let monthsCompleted = (today.getFullYear() - joiningDate.getFullYear()) * 12;
         monthsCompleted += (today.getMonth() - joiningDate.getMonth());
-        
+
         if (today.getDate() < joiningDate.getDate()) {
             monthsCompleted -= 1;
         }
-        
+
         monthsCompleted = Math.max(0, monthsCompleted);
         const isEligible = monthsCompleted >= 6;
 
@@ -229,7 +229,7 @@ exports.applyLeave = async (req, res) => {
                 .maybeSingle();
 
             if (balanceError) throw balanceError;
-            
+
             const available = balanceData?.current_balance || 0;
 
             if (available < days_count) {
@@ -284,8 +284,8 @@ exports.applyLeave = async (req, res) => {
 
         res.json({
             success: true,
-            message: leave_type === 'Comp-Off' 
-                ? 'Comp-Off request submitted successfully!' 
+            message: leave_type === 'Comp-Off'
+                ? 'Comp-Off request submitted successfully!'
                 : 'Leave request submitted successfully!',
             leave: leaveData[0]
         });
@@ -438,77 +438,116 @@ const validateHalfDay = async (employee_id, leaveDate, halfDayType, shiftTiming)
     }
 };
 
-// Get leaves
+// controllers/leaveController.js - COMPLETE FIX
 exports.getLeaves = async (req, res) => {
     try {
-        const { employee_id, role } = req.query;
+        // IMPORTANT: Get the authenticated user from the token
+        const authenticatedUserId = req.user?.employeeId;
+        const userRole = req.user?.role;
 
-        console.log('📋 Fetching leaves with params:', { employee_id, role });
+        console.log('📋 Fetching leaves - User:', {
+            employeeId: authenticatedUserId,
+            role: userRole
+        });
 
         let query = supabase
             .from('leaves')
             .select('*');
 
-        if (role === 'employee' && employee_id) {
-            query = query.eq('employee_id', employee_id);
+        // CRITICAL: Filter based on authenticated user
+        // Filter by employee_id unless admin explicitly requests all
+        if (!(userRole === 'admin' && req.query.all === 'true')) {
+            if (!authenticatedUserId) {
+                console.log('❌ No authenticated user ID found');
+                return res.json([]);
+            }
+            console.log('👤 Filtering leaves for user:', authenticatedUserId);
+            query = query.eq('employee_id', authenticatedUserId);
+        } else {
+            console.log('👑 Admin user - fetching all leaves');
+            // Optional: Filter by specific employee if provided in query
+            if (req.query.employee_id) {
+                query = query.eq('employee_id', req.query.employee_id);
+                console.log('📌 Filtering by specific employee:', req.query.employee_id);
+            }
         }
 
         query = query.order('applied_date', { ascending: false });
 
         const { data: leaves, error } = await query;
 
-        if (error) throw error;
+        if (error) {
+            console.error('❌ Database error:', error);
+            throw error;
+        }
 
-        console.log(`✅ Found ${leaves?.length || 0} leaves`);
+        console.log(`✅ Found ${leaves?.length || 0} leaves for ${userRole === 'admin' ? 'admin' : `employee ${authenticatedUserId}`}`);
 
         if (!leaves || leaves.length === 0) {
             return res.json([]);
         }
 
+        // Format leaves with employee details
         const formattedLeaves = [];
 
         for (const leave of leaves) {
             try {
-                const { data: employee, error: empError } = await supabase
-                    .from('employees')
-                    .select('first_name, last_name, department, designation')
-                    .eq('employee_id', leave.employee_id)
-                    .single();
+                // Only fetch employee details if needed (for admin view)
+                if (userRole === 'admin') {
+                    const { data: employee, error: empError } = await supabase
+                        .from('employees')
+                        .select('first_name, last_name, department, designation')
+                        .eq('employee_id', leave.employee_id)
+                        .single();
 
-                if (empError) {
-                    console.warn(`⚠️ Could not fetch employee details for ${leave.employee_id}:`, empError.message);
+                    if (empError) {
+                        console.warn(`⚠️ Could not fetch employee details for ${leave.employee_id}:`, empError.message);
+                    }
+
+                    formattedLeaves.push({
+                        id: leave.id,
+                        employee_id: leave.employee_id,
+                        leave_type: leave.leave_type,
+                        leave_duration: leave.leave_duration,
+                        start_date: leave.start_date,
+                        end_date: leave.end_date,
+                        half_day_type: leave.half_day_type,
+                        reason: leave.reason,
+                        reporting_manager: leave.reporting_manager,
+                        status: leave.status,
+                        applied_date: leave.applied_date,
+                        days_count: leave.days_count,
+                        admin_comments: leave.admin_comments,
+                        created_at: leave.created_at,
+                        updated_at: leave.updated_at,
+                        first_name: employee?.first_name || '',
+                        last_name: employee?.last_name || '',
+                        department: employee?.department || '',
+                        designation: employee?.designation || ''
+                    });
+                } else {
+                    // For employee view, we don't need to fetch their own details again
+                    formattedLeaves.push({
+                        id: leave.id,
+                        employee_id: leave.employee_id,
+                        leave_type: leave.leave_type,
+                        leave_duration: leave.leave_duration,
+                        start_date: leave.start_date,
+                        end_date: leave.end_date,
+                        half_day_type: leave.half_day_type,
+                        reason: leave.reason,
+                        reporting_manager: leave.reporting_manager,
+                        status: leave.status,
+                        applied_date: leave.applied_date,
+                        days_count: leave.days_count,
+                        admin_comments: leave.admin_comments,
+                        created_at: leave.created_at,
+                        updated_at: leave.updated_at
+                    });
                 }
-
-                formattedLeaves.push({
-                    id: leave.id,
-                    employee_id: leave.employee_id,
-                    leave_type: leave.leave_type,
-                    leave_duration: leave.leave_duration,
-                    start_date: leave.start_date,
-                    end_date: leave.end_date,
-                    half_day_type: leave.half_day_type,
-                    reason: leave.reason,
-                    reporting_manager: leave.reporting_manager,
-                    status: leave.status,
-                    applied_date: leave.applied_date,
-                    days_count: leave.days_count,
-                    admin_comments: leave.admin_comments,
-                    created_at: leave.created_at,
-                    updated_at: leave.updated_at,
-                    first_name: employee?.first_name || '',
-                    last_name: employee?.last_name || '',
-                    department: employee?.department || '',
-                    designation: employee?.designation || ''
-                });
             } catch (empErr) {
                 console.error(`❌ Error processing leave ${leave.id}:`, empErr);
-                formattedLeaves.push({
-                    ...leave,
-                    first_name: '',
-                    last_name: '',
-                    department: '',
-                    designation: ''
-                });
+                formattedLeaves.push(leave);
             }
         }
 
@@ -516,15 +555,14 @@ exports.getLeaves = async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error in getLeaves:', error);
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             message: 'Error fetching leaves',
             error: error.message
         });
     }
 };
 
-// Update leave status (Admin only)
 exports.updateLeaveStatus = async (req, res) => {
     try {
         const { id } = req.params;
@@ -559,32 +597,19 @@ exports.updateLeaveStatus = async (req, res) => {
             });
         }
 
-        console.log('📋 Found leave:', leave);
+        console.log('📋 Found leave for employee:', leave.employee_id);
 
-        // Prepare update data - SIMPLIFIED VERSION
+        // Update only this specific leave record
         const updateData = {
             status: status,
             remarks: remarks || null,
             updated_at: new Date().toISOString()
         };
 
-        // Only add approved_by if the column exists (we'll handle this gracefully)
-        try {
-            // First check if approved_by column exists
-            const { data: columnCheck, error: columnError } = await supabase
-                .from('leaves')
-                .select('approved_by')
-                .limit(1);
-
-            if (!columnError) {
-                // Column exists, add it to update
-                updateData.approved_by = approver_id;
-                updateData.approved_date = status === 'approved' ? new Date().toISOString().split('T')[0] : null;
-            } else {
-                console.log('⚠️ approved_by column does not exist, skipping...');
-            }
-        } catch (colErr) {
-            console.log('⚠️ Could not check approved_by column:', colErr.message);
+        // Add approved_by if available
+        if (approver_id) {
+            updateData.approved_by = approver_id;
+            updateData.approved_date = status === 'approved' ? new Date().toISOString().split('T')[0] : null;
         }
 
         console.log('📝 Updating with data:', updateData);
@@ -601,7 +626,7 @@ exports.updateLeaveStatus = async (req, res) => {
             throw updateError;
         }
 
-        console.log(`✅ Leave ${status}:`, updatedLeave[0]);
+        console.log(`✅ Leave ${status} for employee ${leave.employee_id}:`, updatedLeave[0]);
 
         // If comp-off leave is approved, deduct from balance
         if (status === 'approved' && leave.leave_type === 'Comp-Off') {
@@ -645,45 +670,45 @@ exports.updateLeaveStatus = async (req, res) => {
 exports.getLeaveTypes = async (req, res) => {
     try {
         const { employee_id } = req.query;
-        
+
         let availableTypes = [
             { value: 'Unpaid', label: 'Unpaid Leave', icon: '💰' }
         ];
-        
+
         if (employee_id) {
             const { data: employee, error } = await supabase
                 .from('employees')
                 .select('comp_off_balance')
                 .eq('employee_id', employee_id)
                 .single();
-                
+
             if (!error && employee.comp_off_balance > 0) {
-                availableTypes.unshift({ 
-                    value: 'Comp-Off', 
-                    label: `Comp-Off (${employee.comp_off_balance} days available)`, 
-                    icon: '🎉' 
+                availableTypes.unshift({
+                    value: 'Comp-Off',
+                    label: `Comp-Off (${employee.comp_off_balance} days available)`,
+                    icon: '🎉'
                 });
             }
-            
+
             const { data: empData } = await supabase
                 .from('employees')
                 .select('joining_date')
                 .eq('employee_id', employee_id)
                 .single();
-                
+
             if (empData) {
                 const joiningDate = new Date(empData.joining_date);
                 const today = new Date();
-                
+
                 let monthsCompleted = (today.getFullYear() - joiningDate.getFullYear()) * 12;
                 monthsCompleted += (today.getMonth() - joiningDate.getMonth());
-                
+
                 if (today.getDate() < joiningDate.getDate()) {
                     monthsCompleted -= 1;
                 }
-                
+
                 monthsCompleted = Math.max(0, monthsCompleted);
-                
+
                 if (monthsCompleted >= 6) {
                     availableTypes.push(
                         { value: 'Annual', label: 'Annual Leave', icon: '🌴' },

@@ -350,69 +350,164 @@ exports.clockIn = async (req, res) => {
     }
 };
 
-// Clock out function
+// In attendanceController.js - Fix the clockOut function
 exports.clockOut = async (req, res) => {
     try {
+        console.log('='.repeat(70));
+        console.log('📍 CLOCK-OUT REQUEST');
+        console.log('Time:', new Date().toISOString());
+        console.log('Request body:', JSON.stringify(req.body, null, 2));
+        console.log('='.repeat(70));
+
         const { employee_id, session_id, latitude, longitude, accuracy } = req.body;
-        if (!employee_id || !session_id) {
-            return res.status(400).json({ success: false, message: 'Employee ID and Session ID are required' });
+
+        if (!employee_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Employee ID is required'
+            });
         }
+
+        if (!session_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Session ID is required. Please clock in first.'
+            });
+        }
+
         const now = new Date();
         const today = now.toISOString().split('T')[0];
         const holidayCheck = isHoliday(now);
-        let session, attendanceRecord;
-        const { data: activeSessions } = await supabase
+
+        console.log(`🔍 Looking for active session: ${session_id} for employee: ${employee_id}`);
+
+        // 1. First, find the active session
+        const { data: activeSessions, error: sessionError } = await supabase
             .from('attendance_sessions')
             .select('*')
             .eq('session_id', session_id)
             .eq('employee_id', employee_id)
             .eq('is_active', true);
+
+        if (sessionError) {
+            console.error('❌ Session query error:', sessionError);
+            throw sessionError;
+        }
+
+        console.log(`Found ${activeSessions?.length || 0} active sessions`);
+
+        let session;
+        let attendanceRecord;
+
         if (!activeSessions || activeSessions.length === 0) {
-            const { data: fallbackSessions } = await supabase
+            // Try to find by employee_id only as fallback
+            console.log('⚠️ No session found with given session_id, trying fallback...');
+
+            const { data: fallbackSessions, error: fallbackError } = await supabase
                 .from('attendance_sessions')
                 .select('*')
                 .eq('employee_id', employee_id)
                 .eq('is_active', true)
                 .order('clock_in_time', { ascending: false })
                 .limit(1);
-            if (!fallbackSessions || fallbackSessions.length === 0) {
-                return res.status(400).json({ success: false, message: 'No active clock-in session found' });
+
+            if (fallbackError) {
+                console.error('❌ Fallback session error:', fallbackError);
+                throw fallbackError;
             }
+
+            if (!fallbackSessions || fallbackSessions.length === 0) {
+                console.log('❌ No active session found for employee:', employee_id);
+                return res.status(400).json({
+                    success: false,
+                    message: 'No active clock-in session found. Please clock in first.',
+                    error_type: 'NO_ACTIVE_SESSION'
+                });
+            }
+
+            console.log('✅ Using fallback session:', fallbackSessions[0].session_id);
             session = fallbackSessions[0];
-            const { data: attendanceRecords } = await supabase
+
+            // Find attendance record for this session
+            const { data: attendanceRecords, error: attendanceError } = await supabase
                 .from('attendance')
                 .select('*')
                 .eq('employee_id', employee_id)
                 .eq('session_id', session.session_id)
-                .is('clock_out', null);
-            if (!attendanceRecords || attendanceRecords.length === 0) {
-                return res.status(400).json({ success: false, message: 'No matching attendance record found' });
+                .is('clock_out', null)
+                .order('clock_in', { ascending: false })
+                .limit(1);
+
+            if (attendanceError) {
+                console.error('❌ Attendance record error:', attendanceError);
+                throw attendanceError;
             }
+
+            if (!attendanceRecords || attendanceRecords.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'No matching attendance record found for the active session.'
+                });
+            }
+
             attendanceRecord = attendanceRecords[0];
         } else {
             session = activeSessions[0];
-            const { data: attendanceRecords } = await supabase
+            console.log('✅ Found active session:', session.session_id);
+
+            // Find the corresponding attendance record
+            const { data: attendanceRecords, error: attendanceError } = await supabase
                 .from('attendance')
                 .select('*')
                 .eq('employee_id', employee_id)
                 .eq('session_id', session_id)
-                .is('clock_out', null);
+                .is('clock_out', null)
+                .order('clock_in', { ascending: false })
+                .limit(1);
+
+            if (attendanceError) {
+                console.error('❌ Attendance record error:', attendanceError);
+                throw attendanceError;
+            }
+
             if (!attendanceRecords || attendanceRecords.length === 0) {
-                const { data: fallbackAttendance } = await supabase
+                // Try without session_id filter as fallback
+                console.log('⚠️ No attendance record with session_id, trying fallback...');
+
+                const { data: fallbackAttendance, error: fallbackError } = await supabase
                     .from('attendance')
                     .select('*')
                     .eq('employee_id', employee_id)
                     .is('clock_out', null)
                     .order('clock_in', { ascending: false })
                     .limit(1);
-                if (!fallbackAttendance || fallbackAttendance.length === 0) {
-                    return res.status(400).json({ success: false, message: 'No matching attendance record found' });
+
+                if (fallbackError) {
+                    console.error('❌ Fallback attendance error:', fallbackError);
+                    throw fallbackError;
                 }
+
+                if (!fallbackAttendance || fallbackAttendance.length === 0) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'No matching attendance record found for this session.'
+                    });
+                }
+
                 attendanceRecord = fallbackAttendance[0];
+                console.log('✅ Found fallback attendance record:', attendanceRecord.id);
             } else {
                 attendanceRecord = attendanceRecords[0];
             }
         }
+
+        console.log('✅ Found attendance record:', {
+            id: attendanceRecord.id,
+            clock_in: attendanceRecord.clock_in,
+            attendance_date: attendanceRecord.attendance_date
+        });
+
+        // Calculate exact hours with minutes precision
         const clockIn = new Date(attendanceRecord.clock_in);
         const diffMs = now - clockIn;
         const totalMinutes = diffMs / (1000 * 60);
@@ -420,59 +515,106 @@ exports.clockOut = async (req, res) => {
         const hours = Math.floor(totalMinutes / 60);
         const minutes = Math.round(totalMinutes % 60);
         const totalHoursDisplay = `${hours}h ${minutes}m`;
-        const { data: employee } = await supabase
+
+        console.log(`📊 Hours calculated: ${totalHours.toFixed(2)} hours (${totalMinutes.toFixed(0)} minutes)`);
+        console.log(`   Clock In: ${clockIn.toLocaleTimeString()}`);
+        console.log(`   Clock Out: ${now.toLocaleTimeString()}`);
+        console.log(`   Difference: ${hours}h ${minutes}m`);
+
+        // Get employee shift timing to calculate overtime
+        const { data: employee, error: empError } = await supabase
             .from('employees')
             .select('shift_timing')
             .eq('employee_id', employee_id)
             .single();
-        const shiftTiming = parseShiftTiming(employee?.shift_timing);
-        const overtime = calculateOvertime(totalHours, shiftTiming.totalHours || 9);
-        let compOffAwarded = false, compOffDays = 0;
-        if (holidayCheck.isHoliday && totalHours >= 8) {
-            compOffAwarded = true;
-            compOffDays = 1.0;
-            await supabase.from('comp_off_earnings').insert([{
-                employee_id, attendance_date: today, holiday_name: holidayCheck.name,
-                hours_worked: totalHours, comp_off_days: compOffDays, is_used: false
-            }]);
-            await supabase.from('employees').update({
-                comp_off_balance: supabase.raw('COALESCE(comp_off_balance, 0) + ?', [compOffDays])
-            }).eq('employee_id', employee_id);
+
+        if (empError) {
+            console.error('❌ Employee fetch error:', empError);
+            // Continue with default shift timing
         }
+
+        const shiftTiming = parseShiftTiming(employee?.shift_timing);
+        const shiftHours = shiftTiming.totalHours || 9;
+        const overtime = calculateOvertime(totalHours, shiftHours);
+
+        // Determine status based on total minutes
         let status = 'present';
-        if (totalMinutes < 240) status = 'absent';
-        else if (totalMinutes < 480) status = 'half_day';
-        await supabase
+        if (totalMinutes < 240) { // Less than 4 hours
+            status = 'absent';
+        } else if (totalMinutes < 480) { // Less than 8 hours but >= 4 hours
+            status = 'half_day';
+        }
+
+        // Prepare update data
+        const updateData = {
+            clock_out: now.toISOString(),
+            total_hours: Math.round(totalHours * 100) / 100,
+            total_minutes: Math.round(totalMinutes),
+            total_hours_display: totalHoursDisplay,
+            status: status,
+            latitude: latitude || attendanceRecord.latitude,
+            longitude: longitude || attendanceRecord.longitude,
+            location_accuracy: accuracy || attendanceRecord.location_accuracy,
+            is_holiday: holidayCheck.isHoliday || false,
+            holiday_name: holidayCheck.name || null,
+            overtime_minutes: overtime.overtimeMinutes || 0,
+            overtime_hours: overtime.overtimeHours || 0,
+            overtime_amount: overtime.overtimeAmount || 0
+        };
+
+        console.log('📝 Updating attendance with:', updateData);
+
+        // Update attendance record
+        const { error: updateAttendanceError } = await supabase
             .from('attendance')
-            .update({
-                clock_out: now.toISOString(),
-                total_hours: Math.round(totalHours * 100) / 100,
-                total_minutes: Math.round(totalMinutes),
-                total_hours_display: totalHoursDisplay,
-                status: status, latitude, longitude,
-                location_accuracy: accuracy, is_holiday: holidayCheck.isHoliday,
-                comp_off_awarded: compOffAwarded, comp_off_days: compOffDays,
-                overtime_minutes: overtime.overtimeMinutes,
-                overtime_hours: overtime.overtimeHours,
-                overtime_amount: overtime.overtimeAmount
-            })
+            .update(updateData)
             .eq('id', attendanceRecord.id);
-        await supabase
+
+        if (updateAttendanceError) {
+            console.error('❌ Update attendance error:', updateAttendanceError);
+            throw updateAttendanceError;
+        }
+
+        // Deactivate session
+        const { error: updateSessionError } = await supabase
             .from('attendance_sessions')
-            .update({ is_active: false, clock_out_time: now.toISOString() })
+            .update({
+                is_active: false,
+                clock_out_time: now.toISOString()
+            })
             .eq('id', session.id);
-        let message = `✅ Clocked out successfully. Total hours: ${totalHoursDisplay}`;
-        if (compOffAwarded) message = `✅ Clocked out successfully! 🎉 You earned ${compOffDays} Comp-Off day! Total hours: ${totalHoursDisplay}`;
-        else if (overtime.hasOvertime) message = `✅ Clocked out successfully! Total hours: ${totalHoursDisplay} (${overtime.overtimeHours}h overtime! ₹${overtime.overtimeAmount})`;
+
+        if (updateSessionError) {
+            console.error('❌ Update session error:', updateSessionError);
+            throw updateSessionError;
+        }
+
+        console.log('✅ Clock-out successful');
+
         res.json({
-            success: true, message, clock_out: now, total_hours: Math.round(totalHours * 100) / 100,
-            total_minutes: Math.round(totalMinutes), total_hours_display: totalHoursDisplay,
-            status, session_id: session.session_id, comp_off_awarded: compOffAwarded,
-            comp_off_days: compOffDays, overtime: overtime
+            success: true,
+            message: `✅ Clocked out successfully. Total hours: ${totalHoursDisplay}`,
+            clock_out: now,
+            total_hours: Math.round(totalHours * 100) / 100,
+            total_minutes: Math.round(totalMinutes),
+            total_hours_display: totalHoursDisplay,
+            status,
+            session_id: session.session_id,
+            overtime: overtime
         });
+
     } catch (error) {
         console.error('❌ Clock-out error:', error);
-        res.status(500).json({ success: false, message: 'Failed to clock out', error: error.message });
+        console.error('Error stack:', error.stack);
+        console.error('Error details:', error.details || error.hint || 'No details');
+
+        res.status(500).json({
+            success: false,
+            message: 'Failed to clock out',
+            error: error.message,
+            error_type: 'SERVER_ERROR',
+            details: error.details || error.hint
+        });
     }
 };
 
