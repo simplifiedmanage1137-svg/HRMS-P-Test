@@ -30,7 +30,21 @@ import {
   FaUserGraduate,
   FaChartBar,
   FaFileAlt,
-  FaTrash
+  FaTrash,
+  FaSort,
+  FaSortUp,
+  FaSortDown,
+  FaGift,
+  FaStar,
+  FaMedal,
+  FaArrowLeft,
+  FaArrowRight,
+  FaHome,
+  FaBriefcase,
+  FaEnvelope,
+  FaPhone,
+  FaMapMarkerAlt,
+  FaUser
 } from 'react-icons/fa';
 import { Line, Doughnut, Bar } from 'react-chartjs-2';
 import {
@@ -64,7 +78,7 @@ ChartJS.register(
   Filler
 );
 
-// Regularization Requests Component
+// ============== REGULARIZATION REQUESTS COMPONENT ==============
 const RegularizationRequests = ({ onRequestCountChange }) => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -128,7 +142,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
       setSelectedRequest(null);
       setApprovedTime('');
       setAdminNotes('');
-      
+
       if (addNotification) {
         addNotification({
           employee_id: selectedRequest.employee_id,
@@ -137,7 +151,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
           type: 'regularization_approved'
         });
       }
-      
+
       fetchRequests();
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
     } catch (error) {
@@ -165,7 +179,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
       setShowRejectModal(false);
       setSelectedRequest(null);
       setRejectionReason('');
-      
+
       if (addNotification) {
         addNotification({
           employee_id: selectedRequest.employee_id,
@@ -174,7 +188,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
           type: 'regularization_rejected'
         });
       }
-      
+
       fetchRequests();
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
     } catch (error) {
@@ -311,7 +325,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
                     <th className="fw-normal">Requested Clock Out</th>
                     <th className="fw-normal">Status</th>
                     <th className="fw-normal text-center">Actions</th>
-                   </tr>
+                  </tr>
                 </thead>
                 <tbody>
                   {filteredRequests.map((request, index) => (
@@ -635,7 +649,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
   );
 };
 
-// Main AdminDashboard Component
+// ============== MAIN ADMIN DASHBOARD COMPONENT ==============
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { todayEvents, fetchTodayEvents } = useNotification();
@@ -664,7 +678,6 @@ const AdminDashboard = () => {
   const [attendanceSearchTerm, setAttendanceSearchTerm] = useState('');
   const [leaveSearchTerm, setLeaveSearchTerm] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
-  const [departmentStats, setDepartmentStats] = useState({});
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [totalEmployees, setTotalEmployees] = useState(0);
   const [activeTab, setActiveTab] = useState('overview');
@@ -673,12 +686,20 @@ const AdminDashboard = () => {
   const [exportType, setExportType] = useState('attendance');
   const [exportDateRange, setExportDateRange] = useState({ start: '', end: '' });
   const [exporting, setExporting] = useState(false);
-  
-  // New states for upcoming events
-  const [allUpcomingBirthdays, setAllUpcomingBirthdays] = useState([]);
-  const [allUpcomingAnniversaries, setAllUpcomingAnniversaries] = useState([]);
-  const [displayBirthdays, setDisplayBirthdays] = useState([]);
-  const [displayAnniversaries, setDisplayAnniversaries] = useState([]);
+
+  // Birthday and Anniversary states
+  const [allBirthdays, setAllBirthdays] = useState([]);
+  const [allAnniversaries, setAllAnniversaries] = useState([]);
+  const [birthdayFilter, setBirthdayFilter] = useState('all');
+  const [anniversaryFilter, setAnniversaryFilter] = useState('all');
+  const [birthdaySort, setBirthdaySort] = useState('date');
+  const [anniversarySort, setAnniversarySort] = useState('date');
+  const [birthdaySortOrder, setBirthdaySortOrder] = useState('asc');
+  const [anniversarySortOrder, setAnniversarySortOrder] = useState('asc');
+  const [birthdaySearch, setBirthdaySearch] = useState('');
+  const [anniversarySearch, setAnniversarySearch] = useState('');
+  const [birthdayDepartmentFilter, setBirthdayDepartmentFilter] = useState('all');
+  const [anniversaryDepartmentFilter, setAnniversaryDepartmentFilter] = useState('all');
 
   // Chart data states
   const [departmentChartData, setDepartmentChartData] = useState({
@@ -694,12 +715,10 @@ const AdminDashboard = () => {
     fetchDashboardData();
     fetchTodayEvents();
 
-    // Only Live Attendance Feed auto-refreshes every 60 seconds
     const attendanceInterval = setInterval(() => {
       refreshAttendanceData();
     }, 60000);
 
-    // Refresh leave requests every 30 seconds
     const leaveInterval = setInterval(() => {
       refreshLeaveRequests();
     }, 30000);
@@ -710,13 +729,12 @@ const AdminDashboard = () => {
     };
   }, []);
 
-  // Filter attendance based on search term
   useEffect(() => {
     if (!attendanceSearchTerm.trim()) {
       setFilteredAttendance(todayAttendance);
     } else {
       const searchLower = attendanceSearchTerm.toLowerCase();
-      const filtered = todayAttendance.filter(att => 
+      const filtered = todayAttendance.filter(att =>
         att.first_name?.toLowerCase().includes(searchLower) ||
         att.last_name?.toLowerCase().includes(searchLower) ||
         att.employee_id?.toLowerCase().includes(searchLower) ||
@@ -726,13 +744,12 @@ const AdminDashboard = () => {
     }
   }, [attendanceSearchTerm, todayAttendance]);
 
-  // Filter leave requests based on search term
   useEffect(() => {
     if (!leaveSearchTerm.trim()) {
       setFilteredLeaveRequests(leaveRequests);
     } else {
       const searchLower = leaveSearchTerm.toLowerCase();
-      const filtered = leaveRequests.filter(leave => 
+      const filtered = leaveRequests.filter(leave =>
         leave.first_name?.toLowerCase().includes(searchLower) ||
         leave.last_name?.toLowerCase().includes(searchLower) ||
         leave.employee_id?.toLowerCase().includes(searchLower) ||
@@ -758,11 +775,11 @@ const AdminDashboard = () => {
         }
       }
 
-      console.log('Employees fetched:', employees.length);
+      console.log('Total employees fetched:', employees.length);
       setTotalEmployees(employees.length);
       setStats(prevStats => ({ ...prevStats, total: employees.length }));
 
-      fetchUpcomingEvents(employees);
+      fetchCompleteEvents(employees);
 
       const balancesPromises = employees.map(async (emp) => {
         try {
@@ -782,7 +799,6 @@ const AdminDashboard = () => {
       setRecentEmployees(employees.slice(-5));
       setLastUpdated(new Date());
 
-      // Calculate department stats for chart
       const deptMap = {};
       employees.forEach(emp => {
         if (emp.department) {
@@ -806,60 +822,225 @@ const AdminDashboard = () => {
     }
   };
 
-  const fetchUpcomingEvents = (employees = null) => {
+  // src/components/Admin/AdminDashboard.jsx - UPDATED fetchCompleteEvents FUNCTION
+
+  const fetchCompleteEvents = (employees = null) => {
     try {
       const empList = employees || employeeLeaveBalances;
       const today = new Date();
       const currentYear = today.getFullYear();
 
+      // Calculate ALL BIRTHDAYS - Past, Present, and Future (ALL YEARS)
       const birthdays = empList.filter(emp => emp.dob).map(emp => {
         const dob = new Date(emp.dob);
         const dobMonth = dob.getMonth() + 1;
         const dobDay = dob.getDate();
+
+        // Create birthday date for current year
         let birthdayThisYear = new Date(currentYear, dobMonth - 1, dobDay);
-        let diffDays = Math.ceil((birthdayThisYear - today) / (1000 * 60 * 60 * 24));
-        if (diffDays < 0) {
+        let daysLeft = Math.ceil((birthdayThisYear - today) / (1000 * 60 * 60 * 24));
+        let status = 'upcoming';
+
+        // Check if birthday has passed this year
+        if (daysLeft < 0) {
+          // Birthday already passed this year
+          status = 'passed';
+          // Calculate days until next year's birthday
           birthdayThisYear = new Date(currentYear + 1, dobMonth - 1, dobDay);
-          diffDays = Math.ceil((birthdayThisYear - today) / (1000 * 60 * 60 * 24));
+          daysLeft = Math.ceil((birthdayThisYear - today) / (1000 * 60 * 60 * 24));
+        } else if (daysLeft === 0) {
+          status = 'today';
         }
+
+        const isThisMonth = dobMonth === today.getMonth() + 1;
+
+        // Calculate age based on birth year
+        let age = currentYear - dob.getFullYear();
+        if (status === 'passed') {
+          // If birthday passed this year, age is current year - birth year
+          age = currentYear - dob.getFullYear();
+        } else if (status === 'upcoming') {
+          // If birthday is upcoming, age is (current year - birth year) but will increase after birthday
+          age = currentYear - dob.getFullYear();
+        } else if (status === 'today') {
+          age = currentYear - dob.getFullYear();
+        }
+
         return {
           ...emp,
-          daysLeft: diffDays,
+          daysLeft: daysLeft,
           birthdayDate: `${dob.getDate().toString().padStart(2, '0')}/${dobMonth.toString().padStart(2, '0')}`,
-          birthdayFull: dob
+          birthdayFull: dob,
+          month: dobMonth,
+          day: dobDay,
+          status: status, // 'upcoming', 'today', 'passed'
+          isThisMonth: isThisMonth,
+          age: age,
+          birthYear: dob.getFullYear()
         };
-      }).sort((a, b) => a.daysLeft - b.daysLeft);
+      }).sort((a, b) => {
+        // Sort by month and day to show all birthdays in calendar order
+        if (a.month === b.month) {
+          return a.day - b.day;
+        }
+        return a.month - b.month;
+      });
 
+      // Calculate ALL ANNIVERSARIES - Past, Present, and Future (ALL YEARS)
       const anniversaries = empList.filter(emp => emp.joining_date).map(emp => {
         const joiningDate = new Date(emp.joining_date);
         const joiningMonth = joiningDate.getMonth() + 1;
         const joiningDay = joiningDate.getDate();
         let anniversaryThisYear = new Date(currentYear, joiningMonth - 1, joiningDay);
-        let diffDays = Math.ceil((anniversaryThisYear - today) / (1000 * 60 * 60 * 24));
-        if (diffDays < 0) {
+        let daysLeft = Math.ceil((anniversaryThisYear - today) / (1000 * 60 * 60 * 24));
+        let status = 'upcoming';
+
+        if (daysLeft < 0) {
+          status = 'passed';
           anniversaryThisYear = new Date(currentYear + 1, joiningMonth - 1, joiningDay);
-          diffDays = Math.ceil((anniversaryThisYear - today) / (1000 * 60 * 60 * 24));
+          daysLeft = Math.ceil((anniversaryThisYear - today) / (1000 * 60 * 60 * 24));
+        } else if (daysLeft === 0) {
+          status = 'today';
         }
-        let yearsCompleted = currentYear - joiningDate.getFullYear();
-        if (anniversaryThisYear.getFullYear() > currentYear) {
-          yearsCompleted = yearsCompleted + 1;
-        }
+
+        const yearsCompleted = currentYear - joiningDate.getFullYear();
+        const isThisMonth = joiningMonth === today.getMonth() + 1;
+
         return {
           ...emp,
-          daysLeft: diffDays,
+          daysLeft: daysLeft,
           yearsCompleted: yearsCompleted,
           anniversaryDate: `${joiningDate.getDate().toString().padStart(2, '0')}/${joiningMonth.toString().padStart(2, '0')}`,
-          joiningFull: joiningDate
+          joiningFull: joiningDate,
+          month: joiningMonth,
+          day: joiningDay,
+          status: status, // 'upcoming', 'today', 'passed'
+          isThisMonth: isThisMonth,
+          joiningYear: joiningDate.getFullYear()
         };
-      }).sort((a, b) => a.daysLeft - b.daysLeft);
+      }).sort((a, b) => {
+        // Sort by month and day to show all anniversaries in calendar order
+        if (a.month === b.month) {
+          return a.day - b.day;
+        }
+        return a.month - b.month;
+      });
 
-      setAllUpcomingBirthdays(birthdays);
-      setAllUpcomingAnniversaries(anniversaries);
-      setDisplayBirthdays(birthdays.slice(0, 5));
-      setDisplayAnniversaries(anniversaries.slice(0, 5));
+      console.log('ALL Birthdays (sorted by month/day):', birthdays.length);
+      console.log('ALL Anniversaries (sorted by month/day):', anniversaries.length);
+
+      setAllBirthdays(birthdays);
+      setAllAnniversaries(anniversaries);
     } catch (error) {
-      console.error('Error fetching upcoming events:', error);
+      console.error('Error fetching complete events:', error);
     }
+  };
+
+  // Update the getFilteredBirthdays function to include ALL statuses
+  const getFilteredBirthdays = () => {
+    let filtered = [...allBirthdays];
+
+    if (birthdaySearch) {
+      const searchLower = birthdaySearch.toLowerCase();
+      filtered = filtered.filter(emp =>
+        emp.first_name?.toLowerCase().includes(searchLower) ||
+        emp.last_name?.toLowerCase().includes(searchLower) ||
+        emp.employee_id?.toLowerCase().includes(searchLower) ||
+        `${emp.first_name} ${emp.last_name}`.toLowerCase().includes(searchLower)
+      );
+    }
+
+    if (birthdayDepartmentFilter !== 'all') {
+      filtered = filtered.filter(emp => emp.department === birthdayDepartmentFilter);
+    }
+
+    // Filter by status - NOW INCLUDES 'all', 'today', 'upcoming', 'passed', 'thisMonth'
+    if (birthdayFilter === 'today') {
+      filtered = filtered.filter(emp => emp.status === 'today');
+    } else if (birthdayFilter === 'upcoming') {
+      filtered = filtered.filter(emp => emp.status === 'upcoming');
+    } else if (birthdayFilter === 'passed') {
+      filtered = filtered.filter(emp => emp.status === 'passed');
+    } else if (birthdayFilter === 'thisMonth') {
+      filtered = filtered.filter(emp => emp.isThisMonth);
+    }
+    // 'all' - show everything
+
+    // Sort options
+    filtered.sort((a, b) => {
+      let comparison = 0;
+      if (birthdaySort === 'date') {
+        // Sort by month and day
+        if (a.month === b.month) {
+          comparison = a.day - b.day;
+        } else {
+          comparison = a.month - b.month;
+        }
+      } else if (birthdaySort === 'name') {
+        comparison = (a.first_name || '').localeCompare(b.first_name || '');
+      } else if (birthdaySort === 'department') {
+        comparison = (a.department || '').localeCompare(b.department || '');
+      } else if (birthdaySort === 'month') {
+        comparison = a.month - b.month;
+      }
+      return birthdaySortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return filtered;
+  };
+
+  // Update the getFilteredAnniversaries function
+  const getFilteredAnniversaries = () => {
+    let filtered = [...allAnniversaries];
+
+    if (anniversarySearch) {
+      const searchLower = anniversarySearch.toLowerCase();
+      filtered = filtered.filter(emp =>
+        emp.first_name?.toLowerCase().includes(searchLower) ||
+        emp.last_name?.toLowerCase().includes(searchLower) ||
+        emp.employee_id?.toLowerCase().includes(searchLower) ||
+        `${emp.first_name} ${emp.last_name}`.toLowerCase().includes(searchLower)
+      );
+    }
+
+    if (anniversaryDepartmentFilter !== 'all') {
+      filtered = filtered.filter(emp => emp.department === anniversaryDepartmentFilter);
+    }
+
+    // Filter by status - NOW INCLUDES 'all', 'today', 'upcoming', 'passed', 'thisMonth'
+    if (anniversaryFilter === 'today') {
+      filtered = filtered.filter(emp => emp.status === 'today');
+    } else if (anniversaryFilter === 'upcoming') {
+      filtered = filtered.filter(emp => emp.status === 'upcoming');
+    } else if (anniversaryFilter === 'passed') {
+      filtered = filtered.filter(emp => emp.status === 'passed');
+    } else if (anniversaryFilter === 'thisMonth') {
+      filtered = filtered.filter(emp => emp.isThisMonth);
+    }
+    // 'all' - show everything
+
+    // Sort options
+    filtered.sort((a, b) => {
+      let comparison = 0;
+      if (anniversarySort === 'date') {
+        if (a.month === b.month) {
+          comparison = a.day - b.day;
+        } else {
+          comparison = a.month - b.month;
+        }
+      } else if (anniversarySort === 'name') {
+        comparison = (a.first_name || '').localeCompare(b.first_name || '');
+      } else if (anniversarySort === 'department') {
+        comparison = (a.department || '').localeCompare(b.department || '');
+      } else if (anniversarySort === 'years') {
+        comparison = b.yearsCompleted - a.yearsCompleted;
+      } else if (anniversarySort === 'month') {
+        comparison = a.month - b.month;
+      }
+      return anniversarySortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return filtered;
   };
 
   const refreshAttendanceData = async () => {
@@ -898,16 +1079,16 @@ const AdminDashboard = () => {
     let absent = total - totalPresent - onLeave;
     absent = absent < 0 ? 0 : absent;
 
-    setStats(prevStats => ({
-      ...prevStats,
-      total: total,
+    setStats({
+      total,
       present: totalPresent,
-      absent: absent,
-      onLeave: onLeave,
-      late: late,
-      halfDay: halfDay,
-      working: working
-    }));
+      absent,
+      onLeave,
+      late,
+      early: 0,
+      halfDay,
+      working
+    });
   };
 
   const getFilteredEmployees = () => {
@@ -1021,6 +1202,8 @@ const AdminDashboard = () => {
     }]
   };
 
+  const uniqueDepartments = [...new Set(allBirthdays.map(emp => emp.department).filter(Boolean))];
+
   if (loading) {
     return (
       <div className="d-flex justify-content-center align-items-center min-vh-100">
@@ -1033,7 +1216,8 @@ const AdminDashboard = () => {
   }
 
   const filteredEmployees = getFilteredEmployees();
-  const hasCelebrations = todayEvents?.total > 0;
+  const filteredBirthdays = getFilteredBirthdays();
+  const filteredAnniversaries = getFilteredAnniversaries();
 
   return (
     <div className="p-2 p-md-3 p-lg-4">
@@ -1079,6 +1263,20 @@ const AdminDashboard = () => {
             Overview
           </Button>
           <Button
+            variant={activeTab === 'birthdays' ? 'info' : 'outline-secondary'}
+            onClick={() => setActiveTab('birthdays')}
+          >
+            <FaBirthdayCake className="me-2" />
+            Birthdays ({allBirthdays.length})
+          </Button>
+          <Button
+            variant={activeTab === 'anniversaries' ? 'warning' : 'outline-secondary'}
+            onClick={() => setActiveTab('anniversaries')}
+          >
+            <FaTrophy className="me-2" />
+            Work Anniversaries ({allAnniversaries.length})
+          </Button>
+          <Button
             variant={activeTab === 'regularization' ? 'warning' : 'outline-secondary'}
             onClick={() => setActiveTab('regularization')}
           >
@@ -1095,10 +1293,374 @@ const AdminDashboard = () => {
 
       {activeTab === 'regularization' ? (
         <RegularizationRequests onRequestCountChange={setRegularizationCount} />
+      ) : activeTab === 'birthdays' ? (
+        // Complete Birthdays List Section - SHOW ALL EMPLOYEES
+        <Card className="border-0 shadow-sm">
+          <Card.Header className="bg-gradient py-3" style={{ background: 'linear-gradient(135deg, #ff6b6b 0%, #ff8e8e 100%)' }}>
+            <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+              <div>
+                <h5 className="mb-1 text-white d-flex align-items-center">
+                  <FaBirthdayCake className="me-2" size={20} />
+                  Employee Birthdays
+                </h5>
+                <p className="mb-0 text-white-50 small">Complete list of all {allBirthdays.length} employee birthdays</p>
+              </div>
+              <Badge bg="light" text="dark" pill className="px-3 py-2">
+                Total: {allBirthdays.length} Employees
+              </Badge>
+            </div>
+          </Card.Header>
+          <Card.Body className="p-3">
+            {/* Filters */}
+            <Row className="mb-3 g-2">
+              <Col xs={12} md={3}>
+                <div className="d-flex align-items-center bg-light rounded-3 p-1">
+                  <FaSearch className="ms-2 text-muted" size={14} />
+                  <Form.Control
+                    type="text"
+                    placeholder="Search by name or ID..."
+                    value={birthdaySearch}
+                    onChange={(e) => setBirthdaySearch(e.target.value)}
+                    className="border-0 bg-transparent"
+                    size="sm"
+                  />
+                </div>
+              </Col>
+              <Col xs={6} md={2}>
+                <Form.Select size="sm" value={birthdayFilter} onChange={(e) => setBirthdayFilter(e.target.value)}>
+                  <option value="all">All Birthdays</option>
+                  <option value="today">Today's Birthdays</option>
+                  <option value="upcoming">Upcoming Birthdays</option>
+                  <option value="passed">Passed Birthdays (This Year)</option>
+                  <option value="thisMonth">This Month</option>
+                </Form.Select>
+              </Col>
+              <Col xs={6} md={2}>
+                <Form.Select size="sm" value={birthdayDepartmentFilter} onChange={(e) => setBirthdayDepartmentFilter(e.target.value)}>
+                  <option value="all">All Departments</option>
+                  {uniqueDepartments.map(dept => (
+                    <option key={dept} value={dept}>{dept}</option>
+                  ))}
+                </Form.Select>
+              </Col>
+              <Col xs={6} md={2}>
+                <Form.Select size="sm" value={birthdaySort} onChange={(e) => setBirthdaySort(e.target.value)}>
+                  <option value="date">Sort by Date</option>
+                  <option value="name">Sort by Name</option>
+                  <option value="department">Sort by Department</option>
+                  <option value="month">Sort by Month</option>
+                </Form.Select>
+              </Col>
+              <Col xs={6} md={1}>
+                <Button
+                  variant="outline-secondary"
+                  size="sm"
+                  onClick={() => setBirthdaySortOrder(birthdaySortOrder === 'asc' ? 'desc' : 'asc')}
+                  className="w-100"
+                >
+                  {birthdaySortOrder === 'asc' ? <FaSortUp /> : <FaSortDown />}
+                </Button>
+              </Col>
+              <Col xs={12} md={2}>
+                <Button
+                  variant="outline-danger"
+                  size="sm"
+                  onClick={() => {
+                    setBirthdaySearch('');
+                    setBirthdayFilter('all');
+                    setBirthdayDepartmentFilter('all');
+                    setBirthdaySort('date');
+                    setBirthdaySortOrder('asc');
+                  }}
+                  className="w-100"
+                >
+                  <FaFilter className="me-1" size={12} />
+                  Clear Filters
+                </Button>
+              </Col>
+            </Row>
+
+            {/* Birthdays Table - SHOW ALL EMPLOYEES (No Pagination) */}
+            <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 350px)', overflowY: 'auto' }}>
+              <Table striped hover className="mb-0 align-middle">
+                {/* Update the table headers */}
+                <thead className="bg-light sticky-top">
+                  <tr className="small">
+                    <th className="fw-normal text-center" style={{ width: '5%' }}>#</th>
+                    <th className="fw-normal" style={{ width: '18%' }}>Employee</th>
+                    <th className="fw-normal d-none d-md-table-cell" style={{ width: '12%' }}>Department</th>
+                    <th className="fw-normal" style={{ width: '10%' }}>Birthday</th>
+                    <th className="fw-normal" style={{ width: '10%' }}>Birth Year</th>
+                    <th className="fw-normal" style={{ width: '12%' }}>Age</th>
+                    <th className="fw-normal" style={{ width: '15%' }}>Days Left</th>
+                    <th className="fw-normal" style={{ width: '10%' }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredBirthdays.length > 0 ? (
+                    filteredBirthdays.map((emp, index) => (
+                      <tr key={emp.id} className={emp.status === 'today' ? 'table-success' : ''}>
+                        <td className="text-center">{index + 1}</td>
+                        <td className="small">
+                          <div className="fw-semibold text-truncate" style={{ maxWidth: '150px' }}>
+                            {emp.first_name} {emp.last_name}
+                          </div>
+                          <small className="text-muted">{emp.employee_id}</small>
+                        </td>
+                        <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '120px' }}>
+                          {emp.department}
+                        </td>
+                        <td className="small">
+                          <Badge bg="light" text="dark" pill className="px-2 py-1">
+                            <FaBirthdayCake className="me-1" size={10} />
+                            {emp.birthdayDate}
+                          </Badge>
+                        </td>
+                        <td className="small">
+                          <span className="text-muted">{emp.birthYear}</span>
+                        </td>
+                        <td className="small">
+                          <Badge bg="info" pill>{emp.age} years</Badge>
+                        </td>
+                        <td className="small">
+                          {emp.status === 'today' ? (
+                            <Badge bg="success" pill>🎉 Today!</Badge>
+                          ) : emp.status === 'upcoming' ? (
+                            emp.daysLeft <= 7 ? (
+                              <Badge bg="warning" pill>In {emp.daysLeft} days</Badge>
+                            ) : (
+                              <Badge bg="info" pill>{emp.daysLeft} days</Badge>
+                            )
+                          ) : (
+                            <Badge bg="secondary" pill>Passed</Badge>
+                          )}
+                        </td>
+                        <td className="small">
+                          {emp.status === 'today' ? (
+                            <Badge bg="success" pill className="px-2 py-1">
+                              <FaGift className="me-1" size={10} /> Today
+                            </Badge>
+                          ) : emp.status === 'upcoming' ? (
+                            <Badge bg="info" pill>Upcoming</Badge>
+                          ) : (
+                            <Badge bg="secondary" pill>Passed</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="8" className="text-center py-4">
+                        <FaBirthdayCake size={40} className="text-muted mb-2 opacity-50" />
+                        <p className="text-muted mb-0">No birthdays found matching the filters</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </Table>
+            </div>
+
+            {/* Show total count */}
+            {filteredBirthdays.length > 0 && (
+              <div className="mt-3 text-center text-muted small">
+                Showing {filteredBirthdays.length} of {allBirthdays.length} birthdays
+              </div>
+            )}
+          </Card.Body>
+        </Card>
+      ) : activeTab === 'anniversaries' ? (
+        // Complete Anniversaries List Section - SHOW ALL EMPLOYEES
+        <Card className="border-0 shadow-sm">
+          <Card.Header className="bg-gradient py-3" style={{ background: 'linear-gradient(135deg, #ffd700 0%, #ffed4e 100%)' }}>
+            <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+              <div>
+                <h5 className="mb-1 d-flex align-items-center">
+                  <FaTrophy className="me-2" size={20} />
+                  Work Anniversaries
+                </h5>
+                <p className="mb-0 text-muted small">Complete list of all {allAnniversaries.length} employee work anniversaries</p>
+              </div>
+              <Badge bg="dark" pill className="px-3 py-2">
+                Total: {allAnniversaries.length} Employees
+              </Badge>
+            </div>
+          </Card.Header>
+          <Card.Body className="p-3">
+            {/* Filters */}
+            <Row className="mb-3 g-2">
+              <Col xs={12} md={3}>
+                <div className="d-flex align-items-center bg-light rounded-3 p-1">
+                  <FaSearch className="ms-2 text-muted" size={14} />
+                  <Form.Control
+                    type="text"
+                    placeholder="Search by name or ID..."
+                    value={anniversarySearch}
+                    onChange={(e) => setAnniversarySearch(e.target.value)}
+                    className="border-0 bg-transparent"
+                    size="sm"
+                  />
+                </div>
+              </Col>
+              <Col xs={6} md={2}>
+                <Form.Select size="sm" value={anniversaryFilter} onChange={(e) => setAnniversaryFilter(e.target.value)}>
+                  <option value="all">All Anniversaries</option>
+                  <option value="today">Today's Anniversaries</option>
+                  <option value="upcoming">Upcoming Anniversaries</option>
+                  <option value="passed">Passed Anniversaries (This Year)</option>
+                  <option value="thisMonth">This Month</option>
+                </Form.Select>
+              </Col>
+              <Col xs={6} md={2}>
+                <Form.Select size="sm" value={anniversaryDepartmentFilter} onChange={(e) => setAnniversaryDepartmentFilter(e.target.value)}>
+                  <option value="all">All Departments</option>
+                  {uniqueDepartments.map(dept => (
+                    <option key={dept} value={dept}>{dept}</option>
+                  ))}
+                </Form.Select>
+              </Col>
+              <Col xs={6} md={2}>
+                <Form.Select size="sm" value={anniversarySort} onChange={(e) => setAnniversarySort(e.target.value)}>
+                  <option value="date">Sort by Date</option>
+                  <option value="name">Sort by Name</option>
+                  <option value="department">Sort by Department</option>
+                  <option value="years">Sort by Years</option>
+                  <option value="month">Sort by Month</option>
+                </Form.Select>
+              </Col>
+              <Col xs={6} md={1}>
+                <Button
+                  variant="outline-secondary"
+                  size="sm"
+                  onClick={() => setAnniversarySortOrder(anniversarySortOrder === 'asc' ? 'desc' : 'asc')}
+                  className="w-100"
+                >
+                  {anniversarySortOrder === 'asc' ? <FaSortUp /> : <FaSortDown />}
+                </Button>
+              </Col>
+              <Col xs={12} md={2}>
+                <Button
+                  variant="outline-warning"
+                  size="sm"
+                  onClick={() => {
+                    setAnniversarySearch('');
+                    setAnniversaryFilter('all');
+                    setAnniversaryDepartmentFilter('all');
+                    setAnniversarySort('date');
+                    setAnniversarySortOrder('asc');
+                  }}
+                  className="w-100"
+                >
+                  <FaFilter className="me-1" size={12} />
+                  Clear Filters
+                </Button>
+              </Col>
+            </Row>
+
+            {/* Anniversaries Table - SHOW ALL EMPLOYEES (No Pagination) */}
+            <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 350px)', overflowY: 'auto' }}>
+              <Table striped hover className="mb-0 align-middle">
+                <thead className="bg-light sticky-top">
+                  <tr className="small">
+                    <th className="fw-normal text-center" style={{ width: '5%' }}>#</th>
+                    <th className="fw-normal" style={{ width: '20%' }}>Employee</th>
+                    <th className="fw-normal d-none d-md-table-cell" style={{ width: '15%' }}>Department</th>
+                    <th className="fw-normal" style={{ width: '12%' }}>Joining Date</th>
+                    <th className="fw-normal" style={{ width: '15%' }}>Years Completed</th>
+                    <th className="fw-normal" style={{ width: '15%' }}>Days Left</th>
+                    <th className="fw-normal" style={{ width: '10%' }}>Status</th>
+                    <th className="fw-normal" style={{ width: '8%' }}>Celebration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAnniversaries.length > 0 ? (
+                    filteredAnniversaries.map((emp, index) => (
+                      <tr key={emp.id} className={emp.status === 'today' ? 'table-warning' : ''}>
+                        <td className="text-center">{index + 1}</td>
+                        <td className="small">
+                          <div className="fw-semibold text-truncate" style={{ maxWidth: '150px' }}>
+                            {emp.first_name} {emp.last_name}
+                          </div>
+                          <small className="text-muted">{emp.employee_id}</small>
+                        </td>
+                        <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '120px' }}>
+                          {emp.department}
+                        </td>
+                        <td className="small">
+                          <Badge bg="light" text="dark" pill className="px-2 py-1">
+                            <FaCalendarAlt className="me-1" size={10} />
+                            {formatDate(emp.joining_date)}
+                          </Badge>
+                        </td>
+                        <td className="small">
+                          <Badge bg="warning" pill className="px-2 py-1">
+                            <FaStar className="me-1" size={10} />
+                            {emp.yearsCompleted} Year{emp.yearsCompleted !== 1 ? 's' : ''}
+                          </Badge>
+                        </td>
+                        <td className="small">
+                          {emp.status === 'today' ? (
+                            <Badge bg="success" pill>🎉 Today!</Badge>
+                          ) : emp.daysLeft <= 7 ? (
+                            <Badge bg="warning" pill>In {emp.daysLeft} days</Badge>
+                          ) : (
+                            <Badge bg="info" pill>{emp.daysLeft} days</Badge>
+                          )}
+                        </td>
+                        <td className="small">
+                          {emp.status === 'today' ? (
+                            <Badge bg="success" pill className="px-2 py-1">
+                              <FaTrophy className="me-1" size={10} /> Today
+                            </Badge>
+                          ) : emp.status === 'upcoming' ? (
+                            <Badge bg="info" pill>Upcoming</Badge>
+                          ) : (
+                            <Badge bg="secondary" pill>Past</Badge>
+                          )}
+                        </td>
+                        <td className="small">
+                          {emp.yearsCompleted === 1 && (
+                            <Badge bg="info" pill>1st Year 🎉</Badge>
+                          )}
+                          {emp.yearsCompleted === 5 && (
+                            <Badge bg="primary" pill>5 Years 🏆</Badge>
+                          )}
+                          {emp.yearsCompleted === 10 && (
+                            <Badge bg="success" pill>10 Years 🎊</Badge>
+                          )}
+                          {emp.yearsCompleted === 20 && (
+                            <Badge bg="danger" pill>20 Years 👑</Badge>
+                          )}
+                          {![1, 5, 10, 20].includes(emp.yearsCompleted) && emp.yearsCompleted > 0 && (
+                            <Badge bg="secondary" pill>{emp.yearsCompleted} Years</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="8" className="text-center py-4">
+                        <FaTrophy size={40} className="text-muted mb-2 opacity-50" />
+                        <p className="text-muted mb-0">No anniversaries found matching the filters</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </Table>
+            </div>
+
+            {/* Show total count */}
+            {filteredAnniversaries.length > 0 && (
+              <div className="mt-3 text-center text-muted small">
+                Showing {filteredAnniversaries.length} of {allAnniversaries.length} anniversaries
+              </div>
+            )}
+          </Card.Body>
+        </Card>
       ) : (
+        // Overview Tab Content (Keep the existing overview content)
         <>
           {/* Today's Events Widget */}
-          {hasCelebrations && (
+          {todayEvents && todayEvents.total > 0 && (
             <Card className="mb-4 border-0 shadow-sm">
               <Card.Header className="bg-gradient text-white py-2" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
                 <h6 className="mb-0 d-flex align-items-center">
@@ -1133,6 +1695,22 @@ const AdminDashboard = () => {
                 <div className="mt-3 pt-2 border-top small text-muted">
                   <span className="fw-semibold">Total Celebrations Today:</span>
                   <Badge bg="success" pill className="ms-1">{todayEvents.total}</Badge>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="ms-3 p-0"
+                    onClick={() => setActiveTab('birthdays')}
+                  >
+                    View All Birthdays →
+                  </Button>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="ms-2 p-0"
+                    onClick={() => setActiveTab('anniversaries')}
+                  >
+                    View All Anniversaries →
+                  </Button>
                 </div>
               </Card.Body>
             </Card>
@@ -1226,7 +1804,7 @@ const AdminDashboard = () => {
             </Col>
           </Row>
 
-          {/* Live Attendance Feed with Search */}
+          {/* Live Attendance Feed */}
           <Card className="mb-4 border-0 shadow-sm">
             <Card.Header className="bg-light d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center py-3 gap-2">
               <h5 className="mb-0 text-dark d-flex align-items-center">
@@ -1270,7 +1848,7 @@ const AdminDashboard = () => {
                       <th className="fw-normal">Clock In</th>
                       <th className="fw-normal d-none d-sm-table-cell">Clock Out</th>
                       <th className="fw-normal">Status</th>
-                     </tr>
+                    </tr>
                   </thead>
                   <tbody>
                     {filteredAttendance.length > 0 ? (
@@ -1312,7 +1890,7 @@ const AdminDashboard = () => {
             </Card.Body>
           </Card>
 
-          {/* Pending Leave Requests with Search */}
+          {/* Pending Leave Requests */}
           <Card className="mb-4 border-0 shadow-sm">
             <Card.Header className="bg-light d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center py-3 gap-2">
               <h5 className="mb-0 text-dark d-flex align-items-center">
@@ -1356,7 +1934,7 @@ const AdminDashboard = () => {
                       <th className="fw-normal">Date Range</th>
                       <th className="fw-normal">Days</th>
                       <th className="fw-normal">Status</th>
-                     </tr>
+                    </tr>
                   </thead>
                   <tbody>
                     {filteredLeaveRequests.length > 0 ? (
