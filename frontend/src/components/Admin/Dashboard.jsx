@@ -92,6 +92,8 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [filter, setFilter] = useState('pending');
   const [expandedRequest, setExpandedRequest] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
   const { addNotification } = useNotification();
 
   const fetchRequests = async () => {
@@ -99,10 +101,12 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
       setLoading(true);
       const response = await axios.get(API_ENDPOINTS.ATTENDANCE_PENDING_REGULARIZATIONS);
       const requestsData = response.data.requests || [];
+      console.log('📋 Regularization requests fetched:', requestsData.length);
       setRequests(requestsData);
       if (onRequestCountChange) {
         onRequestCountChange(requestsData.filter(r => r.status === 'pending').length);
       }
+      setCurrentPage(1);
     } catch (error) {
       console.error('Error fetching regularization requests:', error);
       setMessage({
@@ -129,33 +133,55 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
 
     setProcessing(true);
     try {
-      await axios.put(
-        API_ENDPOINTS.ATTENDANCE_APPROVE_REGULARIZATION(selectedRequest.id),
+      const requestId = String(selectedRequest.id);
+      console.log('📤 Approving request with ID:', requestId);
+
+      const response = await axios.put(
+        API_ENDPOINTS.ATTENDANCE_APPROVE_REGULARIZATION(requestId),
         {
           approved_clock_out_time: approvedTime,
           admin_notes: adminNotes
         }
       );
 
+      console.log('✅ Approval response:', response.data);
+
       setMessage({ type: 'success', text: 'Regularization request approved successfully!' });
+
+      // Remove approved request from state
+      const updatedRequests = requests.filter(req => req.id !== selectedRequest.id);
+      setRequests(updatedRequests);
+
+      if (onRequestCountChange) {
+        onRequestCountChange(updatedRequests.filter(r => r.status === 'pending').length);
+      }
+
       setShowApproveModal(false);
       setSelectedRequest(null);
       setApprovedTime('');
       setAdminNotes('');
 
+      // Clear employee's local session storage
+      const employeeId = selectedRequest.employee_id;
+      const storageKey = `attendance_session_${employeeId}`;
+      localStorage.removeItem(storageKey);
+      console.log(`✅ Cleared session storage for employee: ${employeeId}`);
+
       if (addNotification) {
         addNotification({
           employee_id: selectedRequest.employee_id,
           title: 'Regularization Request Approved',
-          message: `Your regularization request for ${selectedRequest.attendance_date} has been approved.`,
+          message: `Your regularization request for ${selectedRequest.attendance_date} has been approved. Please refresh your page to clock in.`,
           type: 'regularization_approved'
         });
       }
 
-      fetchRequests();
+      await fetchRequests();
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+
     } catch (error) {
       console.error('Error approving regularization:', error);
+      console.error('Error details:', error.response?.data);
       setMessage({
         type: 'danger',
         text: error.response?.data?.message || 'Failed to approve request'
@@ -170,12 +196,24 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
 
     setProcessing(true);
     try {
-      await axios.put(
-        API_ENDPOINTS.ATTENDANCE_REJECT_REGULARIZATION(selectedRequest.id),
+      const requestId = String(selectedRequest.id);
+
+      const response = await axios.put(
+        API_ENDPOINTS.ATTENDANCE_REJECT_REGULARIZATION(requestId),
         { rejection_reason: rejectionReason }
       );
 
+      console.log('❌ Regularization rejected:', response.data);
+
       setMessage({ type: 'success', text: 'Regularization request rejected' });
+
+      const updatedRequests = requests.filter(req => req.id !== selectedRequest.id);
+      setRequests(updatedRequests);
+
+      if (onRequestCountChange) {
+        onRequestCountChange(updatedRequests.filter(r => r.status === 'pending').length);
+      }
+
       setShowRejectModal(false);
       setSelectedRequest(null);
       setRejectionReason('');
@@ -189,7 +227,7 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
         });
       }
 
-      fetchRequests();
+      await fetchRequests();
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
     } catch (error) {
       console.error('Error rejecting regularization:', error);
@@ -242,7 +280,23 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
     return requests.filter(req => req.status === filter);
   };
 
+  const getCurrentPageData = () => {
+    const filtered = getFilteredRequests();
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filtered.slice(startIndex, startIndex + itemsPerPage);
+  };
+
   const filteredRequests = getFilteredRequests();
+  const currentPageData = getCurrentPageData();
+  const totalPages = Math.ceil(filteredRequests.length / itemsPerPage);
+
+  const goToPrevPage = () => {
+    if (currentPage > 1) setCurrentPage(currentPage - 1);
+  };
+
+  const goToNextPage = () => {
+    if (currentPage < totalPages) setCurrentPage(currentPage + 1);
+  };
 
   if (loading) {
     return (
@@ -269,25 +323,25 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
         <ButtonGroup size="sm">
           <Button
             variant={filter === 'pending' ? 'warning' : 'outline-secondary'}
-            onClick={() => setFilter('pending')}
+            onClick={() => { setFilter('pending'); setCurrentPage(1); }}
           >
             Pending ({requests.filter(r => r.status === 'pending').length})
           </Button>
           <Button
             variant={filter === 'approved' ? 'success' : 'outline-secondary'}
-            onClick={() => setFilter('approved')}
+            onClick={() => { setFilter('approved'); setCurrentPage(1); }}
           >
             Approved ({requests.filter(r => r.status === 'approved').length})
           </Button>
           <Button
             variant={filter === 'rejected' ? 'danger' : 'outline-secondary'}
-            onClick={() => setFilter('rejected')}
+            onClick={() => { setFilter('rejected'); setCurrentPage(1); }}
           >
             Rejected ({requests.filter(r => r.status === 'rejected').length})
           </Button>
           <Button
             variant={filter === 'all' ? 'primary' : 'outline-secondary'}
-            onClick={() => setFilter('all')}
+            onClick={() => { setFilter('all'); setCurrentPage(1); }}
           >
             All ({requests.length})
           </Button>
@@ -311,167 +365,199 @@ const RegularizationRequests = ({ onRequestCountChange }) => {
           </Card.Body>
         </Card>
       ) : (
-        <Card className="border-0 shadow-sm">
-          <Card.Body className="p-0">
-            <div className="table-responsive">
-              <Table hover className="mb-0">
-                <thead className="bg-light">
-                  <tr className="small">
-                    <th className="fw-normal text-center">#</th>
-                    <th className="fw-normal">Employee</th>
-                    <th className="fw-normal d-none d-md-table-cell">Department</th>
-                    <th className="fw-normal">Date</th>
-                    <th className="fw-normal">Clock In</th>
-                    <th className="fw-normal">Requested Clock Out</th>
-                    <th className="fw-normal">Status</th>
-                    <th className="fw-normal text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRequests.map((request, index) => (
-                    <React.Fragment key={request.id}>
-                      <tr
-                        className={expandedRequest === request.id ? 'table-active' : ''}
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => setExpandedRequest(expandedRequest === request.id ? null : request.id)}
-                      >
-                        <td className="small text-center">{index + 1}</td>
-                        <td className="small">
-                          <div className="fw-semibold text-truncate" style={{ maxWidth: '120px' }}>
-                            {request.employee_name}
-                          </div>
-                          <small className="text-muted">{request.employee_id}</small>
-                        </td>
-                        <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>
-                          {request.department}
-                        </td>
-                        <td className="small">
-                          <Badge bg="light" text="dark" pill className="px-2 py-1">
-                            <FaCalendarAlt className="me-1" size={10} />
-                            {formatDate(request.attendance_date)}
-                          </Badge>
-                        </td>
-                        <td className="small">
-                          <Badge bg="success" pill className="px-2 py-1">
-                            <FaClock className="me-1" size={10} />
-                            {formatDateTime(request.clock_in_time)}
-                          </Badge>
-                        </td>
-                        <td className="small">
-                          <Badge bg="warning" text="dark" pill className="px-2 py-1">
-                            <FaRegClock className="me-1" size={10} />
-                            {formatDateTime(request.requested_clock_out_time)}
-                          </Badge>
-                        </td>
-                        <td>{getStatusBadge(request.status)}</td>
-                        <td className="text-center">
-                          {request.status === 'pending' && (
-                            <div className="d-flex gap-2 justify-content-center">
-                              <Button
-                                variant="success"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedRequest(request);
-                                  setApprovedTime(request.requested_clock_out_time);
-                                  setShowApproveModal(true);
-                                }}
-                              >
-                                <FaCheckCircle className="me-1" size={12} />
-                                Approve
-                              </Button>
-                              <Button
-                                variant="danger"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedRequest(request);
-                                  setShowRejectModal(true);
-                                }}
-                              >
-                                <FaTimesCircle className="me-1" size={12} />
-                                Reject
-                              </Button>
-                            </div>
-                          )}
-                          {request.status !== 'pending' && (
-                            <Button
-                              variant="outline-secondary"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setExpandedRequest(expandedRequest === request.id ? null : request.id);
-                              }}
-                            >
-                              {expandedRequest === request.id ? (
-                                <FaEyeSlash className="me-1" size={12} />
-                              ) : (
-                                <FaEye className="me-1" size={12} />
+        <>
+          <Card className="border-0 shadow-sm">
+            <Card.Body className="p-0">
+              <div className="table-responsive">
+                <Table hover className="mb-0">
+                  <thead className="bg-light">
+                    <tr className="small">
+                      <th className="fw-normal text-center">#</th>
+                      <th className="fw-normal">Employee</th>
+                      <th className="fw-normal d-none d-md-table-cell">Department</th>
+                      <th className="fw-normal">Date</th>
+                      <th className="fw-normal">Clock In</th>
+                      <th className="fw-normal">Requested Clock Out</th>
+                      <th className="fw-normal">Status</th>
+                      <th className="fw-normal text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {currentPageData.map((request, index) => {
+                      const globalIndex = (currentPage - 1) * itemsPerPage + index + 1;
+                      return (
+                        <React.Fragment key={request.id}>
+                          <tr
+                            className={expandedRequest === request.id ? 'table-active' : ''}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => setExpandedRequest(expandedRequest === request.id ? null : request.id)}
+                          >
+                            <td className="small text-center">{globalIndex}</td>
+                            <td className="small">
+                              <div className="fw-semibold text-truncate" style={{ maxWidth: '120px' }}>
+                                {request.employee_name}
+                              </div>
+                              <small className="text-muted">{request.employee_id}</small>
+                            </td>
+                            <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>
+                              {request.department}
+                            </td>
+                            <td className="small">
+                              <Badge bg="light" text="dark" pill className="px-2 py-1">
+                                <FaCalendarAlt className="me-1" size={10} />
+                                {formatDate(request.attendance_date)}
+                              </Badge>
+                            </td>
+                            <td className="small">
+                              <Badge bg="success" pill className="px-2 py-1">
+                                <FaClock className="me-1" size={10} />
+                                {formatDateTime(request.clock_in_time)}
+                              </Badge>
+                            </td>
+                            <td className="small">
+                              <Badge bg="warning" text="dark" pill className="px-2 py-1">
+                                <FaRegClock className="me-1" size={10} />
+                                {formatDateTime(request.requested_clock_out_time)}
+                              </Badge>
+                            </td>
+                            <td>{getStatusBadge(request.status)}</td>
+                            <td className="text-center">
+                              {request.status === 'pending' && (
+                                <div className="d-flex gap-2 justify-content-center">
+                                  <Button
+                                    variant="success"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedRequest(request);
+                                      setApprovedTime(request.requested_clock_out_time);
+                                      setShowApproveModal(true);
+                                    }}
+                                  >
+                                    <FaCheckCircle className="me-1" size={12} />
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    variant="danger"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedRequest(request);
+                                      setShowRejectModal(true);
+                                    }}
+                                  >
+                                    <FaTimesCircle className="me-1" size={12} />
+                                    Reject
+                                  </Button>
+                                </div>
                               )}
-                              Details
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                      {expandedRequest === request.id && (
-                        <tr className="bg-light">
-                          <td colSpan="8" className="p-3">
-                            <Row className="g-3">
-                              <Col xs={12} md={6}>
-                                <div className="small">
-                                  <strong>Reason:</strong>
-                                  <p className="text-muted mb-0 mt-1">
-                                    {request.reason || 'No reason provided'}
-                                  </p>
-                                </div>
-                              </Col>
-                              <Col xs={12} md={6}>
-                                <div className="small">
-                                  <strong>Requested At:</strong>
-                                  <p className="text-muted mb-0 mt-1">
-                                    {formatDateTime(request.created_at)}
-                                  </p>
-                                </div>
-                              </Col>
-                              {request.status === 'approved' && request.approved_clock_out_time && (
-                                <>
+                              {request.status !== 'pending' && (
+                                <Button
+                                  variant="outline-secondary"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedRequest(expandedRequest === request.id ? null : request.id);
+                                  }}
+                                >
+                                  {expandedRequest === request.id ? (
+                                    <FaEyeSlash className="me-1" size={12} />
+                                  ) : (
+                                    <FaEye className="me-1" size={12} />
+                                  )}
+                                  Details
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                          {expandedRequest === request.id && (
+                            <tr className="bg-light">
+                              <td colSpan="8" className="p-3">
+                                <Row className="g-3">
                                   <Col xs={12} md={6}>
                                     <div className="small">
-                                      <strong>Approved Clock Out:</strong>
-                                      <p className="text-success mb-0 mt-1">
-                                        {formatDateTime(request.approved_clock_out_time)}
+                                      <strong>Reason:</strong>
+                                      <p className="text-muted mb-0 mt-1">
+                                        {request.reason || 'No reason provided'}
                                       </p>
                                     </div>
                                   </Col>
-                                  {request.admin_notes && (
-                                    <Col xs={12} md={6}>
+                                  <Col xs={12} md={6}>
+                                    <div className="small">
+                                      <strong>Requested At:</strong>
+                                      <p className="text-muted mb-0 mt-1">
+                                        {formatDateTime(request.created_at)}
+                                      </p>
+                                    </div>
+                                  </Col>
+                                  {request.status === 'approved' && request.approved_clock_out_time && (
+                                    <>
+                                      <Col xs={12} md={6}>
+                                        <div className="small">
+                                          <strong>Approved Clock Out:</strong>
+                                          <p className="text-success mb-0 mt-1">
+                                            {formatDateTime(request.approved_clock_out_time)}
+                                          </p>
+                                        </div>
+                                      </Col>
+                                      {request.admin_notes && (
+                                        <Col xs={12} md={6}>
+                                          <div className="small">
+                                            <strong>Admin Notes:</strong>
+                                            <p className="text-muted mb-0 mt-1">{request.admin_notes}</p>
+                                          </div>
+                                        </Col>
+                                      )}
+                                    </>
+                                  )}
+                                  {request.status === 'rejected' && request.rejection_reason && (
+                                    <Col xs={12}>
                                       <div className="small">
-                                        <strong>Admin Notes:</strong>
-                                        <p className="text-muted mb-0 mt-1">{request.admin_notes}</p>
+                                        <strong>Rejection Reason:</strong>
+                                        <p className="text-danger mb-0 mt-1">{request.rejection_reason}</p>
                                       </div>
                                     </Col>
                                   )}
-                                </>
-                              )}
-                              {request.status === 'rejected' && request.rejection_reason && (
-                                <Col xs={12}>
-                                  <div className="small">
-                                    <strong>Rejection Reason:</strong>
-                                    <p className="text-danger mb-0 mt-1">{request.rejection_reason}</p>
-                                  </div>
-                                </Col>
-                              )}
-                            </Row>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </Table>
+                                </Row>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              </div>
+            </Card.Body>
+          </Card>
+
+          {totalPages > 1 && (
+            <div className="d-flex justify-content-between align-items-center mt-3">
+              <div className="text-muted small">
+                Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredRequests.length)} of {filteredRequests.length} requests
+              </div>
+              <ButtonGroup size="sm">
+                <Button
+                  variant="outline-secondary"
+                  onClick={goToPrevPage}
+                  disabled={currentPage === 1}
+                >
+                  <FaArrowLeft size={12} />
+                </Button>
+                <Button variant="outline-secondary" disabled>
+                  Page {currentPage} of {totalPages}
+                </Button>
+                <Button
+                  variant="outline-secondary"
+                  onClick={goToNextPage}
+                  disabled={currentPage === totalPages}
+                >
+                  <FaArrowRight size={12} />
+                </Button>
+              </ButtonGroup>
             </div>
-          </Card.Body>
-        </Card>
+          )}
+        </>
       )}
 
       {/* Approve Modal */}
@@ -781,16 +867,51 @@ const AdminDashboard = () => {
 
       fetchCompleteEvents(employees);
 
+      // FIXED: Better error handling for leave balance
       const balancesPromises = employees.map(async (emp) => {
         try {
           const balanceRes = await axios.get(API_ENDPOINTS.LEAVE_BALANCE(emp.employee_id));
-          return { ...emp, leaveBalance: balanceRes.data };
+          console.log(`Leave balance for ${emp.employee_id}:`, balanceRes.data);
+
+          // Ensure we have all required fields with proper structure
+          return {
+            ...emp,
+            leaveBalance: {
+              available: parseFloat(balanceRes.data.available) || 0,
+              total_accrued: parseFloat(balanceRes.data.total_accrued) || 0,
+              used: parseFloat(balanceRes.data.used) || 0,
+              pending: parseFloat(balanceRes.data.pending) || 0,
+              comp_off_balance: parseFloat(balanceRes.data.comp_off_balance) || 0,
+              months_completed: balanceRes.data.months_completed || 0,
+              is_probation_complete: balanceRes.data.is_probation_complete || false,
+              is_eligible: balanceRes.data.is_eligible || false
+            }
+          };
         } catch (error) {
-          return { ...emp, leaveBalance: { available: '0', total_accrued: '0', used: '0', pending: '0' } };
+          console.error(`Error fetching leave balance for ${emp.employee_id}:`, error);
+          // Return default balance structure
+          return {
+            ...emp,
+            leaveBalance: {
+              available: 0,
+              total_accrued: 0,
+              used: 0,
+              pending: 0,
+              comp_off_balance: 0,
+              months_completed: 0,
+              is_probation_complete: false,
+              is_eligible: false
+            }
+          };
         }
       });
 
       const employeesWithBalance = await Promise.all(balancesPromises);
+      console.log('Employees with balance:', employeesWithBalance.map(e => ({
+        name: `${e.first_name} ${e.last_name}`,
+        available: e.leaveBalance?.available
+      })));
+
       setEmployeeLeaveBalances(employeesWithBalance);
 
       await refreshLeaveRequests();
@@ -822,7 +943,11 @@ const AdminDashboard = () => {
     }
   };
 
-  // src/components/Admin/AdminDashboard.jsx - UPDATED fetchCompleteEvents FUNCTION
+  const handleRegularizationApproved = (employeeId) => {
+    console.log(`Regularization approved for employee: ${employeeId}`);
+    fetchDashboardData();
+    refreshAttendanceData();
+  };
 
   const fetchCompleteEvents = (employees = null) => {
     try {
@@ -830,22 +955,17 @@ const AdminDashboard = () => {
       const today = new Date();
       const currentYear = today.getFullYear();
 
-      // Calculate ALL BIRTHDAYS - Past, Present, and Future (ALL YEARS)
       const birthdays = empList.filter(emp => emp.dob).map(emp => {
         const dob = new Date(emp.dob);
         const dobMonth = dob.getMonth() + 1;
         const dobDay = dob.getDate();
 
-        // Create birthday date for current year
         let birthdayThisYear = new Date(currentYear, dobMonth - 1, dobDay);
         let daysLeft = Math.ceil((birthdayThisYear - today) / (1000 * 60 * 60 * 24));
         let status = 'upcoming';
 
-        // Check if birthday has passed this year
         if (daysLeft < 0) {
-          // Birthday already passed this year
           status = 'passed';
-          // Calculate days until next year's birthday
           birthdayThisYear = new Date(currentYear + 1, dobMonth - 1, dobDay);
           daysLeft = Math.ceil((birthdayThisYear - today) / (1000 * 60 * 60 * 24));
         } else if (daysLeft === 0) {
@@ -853,18 +973,7 @@ const AdminDashboard = () => {
         }
 
         const isThisMonth = dobMonth === today.getMonth() + 1;
-
-        // Calculate age based on birth year
         let age = currentYear - dob.getFullYear();
-        if (status === 'passed') {
-          // If birthday passed this year, age is current year - birth year
-          age = currentYear - dob.getFullYear();
-        } else if (status === 'upcoming') {
-          // If birthday is upcoming, age is (current year - birth year) but will increase after birthday
-          age = currentYear - dob.getFullYear();
-        } else if (status === 'today') {
-          age = currentYear - dob.getFullYear();
-        }
 
         return {
           ...emp,
@@ -873,20 +982,16 @@ const AdminDashboard = () => {
           birthdayFull: dob,
           month: dobMonth,
           day: dobDay,
-          status: status, // 'upcoming', 'today', 'passed'
+          status: status,
           isThisMonth: isThisMonth,
           age: age,
           birthYear: dob.getFullYear()
         };
       }).sort((a, b) => {
-        // Sort by month and day to show all birthdays in calendar order
-        if (a.month === b.month) {
-          return a.day - b.day;
-        }
+        if (a.month === b.month) return a.day - b.day;
         return a.month - b.month;
       });
 
-      // Calculate ALL ANNIVERSARIES - Past, Present, and Future (ALL YEARS)
       const anniversaries = empList.filter(emp => emp.joining_date).map(emp => {
         const joiningDate = new Date(emp.joining_date);
         const joiningMonth = joiningDate.getMonth() + 1;
@@ -914,15 +1019,12 @@ const AdminDashboard = () => {
           joiningFull: joiningDate,
           month: joiningMonth,
           day: joiningDay,
-          status: status, // 'upcoming', 'today', 'passed'
+          status: status,
           isThisMonth: isThisMonth,
           joiningYear: joiningDate.getFullYear()
         };
       }).sort((a, b) => {
-        // Sort by month and day to show all anniversaries in calendar order
-        if (a.month === b.month) {
-          return a.day - b.day;
-        }
+        if (a.month === b.month) return a.day - b.day;
         return a.month - b.month;
       });
 
@@ -936,7 +1038,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // Update the getFilteredBirthdays function to include ALL statuses
   const getFilteredBirthdays = () => {
     let filtered = [...allBirthdays];
 
@@ -954,7 +1055,6 @@ const AdminDashboard = () => {
       filtered = filtered.filter(emp => emp.department === birthdayDepartmentFilter);
     }
 
-    // Filter by status - NOW INCLUDES 'all', 'today', 'upcoming', 'passed', 'thisMonth'
     if (birthdayFilter === 'today') {
       filtered = filtered.filter(emp => emp.status === 'today');
     } else if (birthdayFilter === 'upcoming') {
@@ -964,18 +1064,12 @@ const AdminDashboard = () => {
     } else if (birthdayFilter === 'thisMonth') {
       filtered = filtered.filter(emp => emp.isThisMonth);
     }
-    // 'all' - show everything
 
-    // Sort options
     filtered.sort((a, b) => {
       let comparison = 0;
       if (birthdaySort === 'date') {
-        // Sort by month and day
-        if (a.month === b.month) {
-          comparison = a.day - b.day;
-        } else {
-          comparison = a.month - b.month;
-        }
+        if (a.month === b.month) comparison = a.day - b.day;
+        else comparison = a.month - b.month;
       } else if (birthdaySort === 'name') {
         comparison = (a.first_name || '').localeCompare(b.first_name || '');
       } else if (birthdaySort === 'department') {
@@ -989,7 +1083,6 @@ const AdminDashboard = () => {
     return filtered;
   };
 
-  // Update the getFilteredAnniversaries function
   const getFilteredAnniversaries = () => {
     let filtered = [...allAnniversaries];
 
@@ -1007,7 +1100,6 @@ const AdminDashboard = () => {
       filtered = filtered.filter(emp => emp.department === anniversaryDepartmentFilter);
     }
 
-    // Filter by status - NOW INCLUDES 'all', 'today', 'upcoming', 'passed', 'thisMonth'
     if (anniversaryFilter === 'today') {
       filtered = filtered.filter(emp => emp.status === 'today');
     } else if (anniversaryFilter === 'upcoming') {
@@ -1017,17 +1109,12 @@ const AdminDashboard = () => {
     } else if (anniversaryFilter === 'thisMonth') {
       filtered = filtered.filter(emp => emp.isThisMonth);
     }
-    // 'all' - show everything
 
-    // Sort options
     filtered.sort((a, b) => {
       let comparison = 0;
       if (anniversarySort === 'date') {
-        if (a.month === b.month) {
-          comparison = a.day - b.day;
-        } else {
-          comparison = a.month - b.month;
-        }
+        if (a.month === b.month) comparison = a.day - b.day;
+        else comparison = a.month - b.month;
       } else if (anniversarySort === 'name') {
         comparison = (a.first_name || '').localeCompare(b.first_name || '');
       } else if (anniversarySort === 'department') {
@@ -1093,27 +1180,34 @@ const AdminDashboard = () => {
 
   const getFilteredEmployees = () => {
     let filtered = [...employeeLeaveBalances];
+
     if (filterDepartment !== 'all') {
       filtered = filtered.filter(emp => emp.department === filterDepartment);
     }
+
     if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
       filtered = filtered.filter(emp =>
-        emp.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.employee_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.department?.toLowerCase().includes(searchTerm.toLowerCase())
+        emp.first_name?.toLowerCase().includes(searchLower) ||
+        emp.last_name?.toLowerCase().includes(searchLower) ||
+        emp.employee_id?.toLowerCase().includes(searchLower) ||
+        emp.department?.toLowerCase().includes(searchLower)
       );
     }
+
     filtered.sort((a, b) => {
       if (sortBy === 'name') {
         return (a.first_name || '').localeCompare(b.first_name || '');
       } else if (sortBy === 'balance') {
-        return (parseFloat(b.leaveBalance?.available) || 0) - (parseFloat(a.leaveBalance?.available) || 0);
+        const balanceA = parseFloat(a.leaveBalance?.available) || 0;
+        const balanceB = parseFloat(b.leaveBalance?.available) || 0;
+        return balanceB - balanceA;
       } else if (sortBy === 'department') {
         return (a.department || '').localeCompare(b.department || '');
       }
       return 0;
     });
+
     return filtered;
   };
 
@@ -1159,9 +1253,19 @@ const AdminDashboard = () => {
   };
 
   const departments = ['all', ...new Set(employeeLeaveBalances.map(emp => emp.department).filter(Boolean))];
-  const totalLeavesAvailable = employeeLeaveBalances.reduce((sum, emp) => sum + (parseFloat(emp.leaveBalance?.available) || 0), 0);
-  const averageLeavesPerEmployee = employeeLeaveBalances.length > 0 ? (totalLeavesAvailable / employeeLeaveBalances.length).toFixed(1) : 0;
-  const employeesWithLowBalance = employeeLeaveBalances.filter(emp => parseFloat(emp.leaveBalance?.available) < 3).length;
+  const totalLeavesAvailable = employeeLeaveBalances.reduce((sum, emp) => {
+    const available = parseFloat(emp.leaveBalance?.available) || 0;
+    return sum + available;
+  }, 0);
+
+  const averageLeavesPerEmployee = employeeLeaveBalances.length > 0
+    ? (totalLeavesAvailable / employeeLeaveBalances.length).toFixed(1)
+    : 0;
+
+  const employeesWithLowBalance = employeeLeaveBalances.filter(emp => {
+    const available = parseFloat(emp.leaveBalance?.available) || 0;
+    return available < 3;
+  }).length;
 
   const formatTime = (datetime) => {
     if (!datetime) return '--:--';
@@ -1227,18 +1331,29 @@ const AdminDashboard = () => {
           <h4 className="mb-1 d-flex align-items-center flex-wrap">
             <FaUsers className="me-2 text-dark" />
             <span>Admin Dashboard</span>
-            {regularizationCount > 0 && (
-              <Badge bg="danger" pill className="ms-2" style={{ fontSize: '12px' }}>
-                {regularizationCount} Pending Regularizations
-              </Badge>
-            )}
+            
           </h4>
           <p className="text-muted mb-0 small d-flex align-items-center flex-wrap">
             <FaClock className="me-1" size={12} />
             <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
           </p>
         </div>
+
+        {/* Only ONE set of buttons - Remove the duplicate */}
         <div className="d-flex gap-2">
+          <Button
+            variant="outline-primary"
+            size="sm"
+            onClick={() => {
+              fetchDashboardData();
+              if (showNotification) {
+                showNotification('Refreshing dashboard data...', 'info');
+              }
+            }}
+          >
+            <FaSyncAlt className="me-1" size={12} />
+            Refresh
+          </Button>
           <Button variant="outline-success" size="sm" onClick={() => setShowExportModal(true)}>
             <FaDownload className="me-1" size={12} />
             Export
@@ -1292,9 +1407,11 @@ const AdminDashboard = () => {
       </div>
 
       {activeTab === 'regularization' ? (
-        <RegularizationRequests onRequestCountChange={setRegularizationCount} />
+        <RegularizationRequests
+          onRequestCountChange={setRegularizationCount}
+        />
       ) : activeTab === 'birthdays' ? (
-        // Complete Birthdays List Section - SHOW ALL EMPLOYEES
+        // Birthdays Tab
         <Card className="border-0 shadow-sm">
           <Card.Header className="bg-gradient py-3" style={{ background: 'linear-gradient(135deg, #ff6b6b 0%, #ff8e8e 100%)' }}>
             <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
@@ -1311,7 +1428,6 @@ const AdminDashboard = () => {
             </div>
           </Card.Header>
           <Card.Body className="p-3">
-            {/* Filters */}
             <Row className="mb-3 g-2">
               <Col xs={12} md={3}>
                 <div className="d-flex align-items-center bg-light rounded-3 p-1">
@@ -1330,8 +1446,8 @@ const AdminDashboard = () => {
                 <Form.Select size="sm" value={birthdayFilter} onChange={(e) => setBirthdayFilter(e.target.value)}>
                   <option value="all">All Birthdays</option>
                   <option value="today">Today's Birthdays</option>
-                  <option value="upcoming">Upcoming Birthdays</option>
-                  <option value="passed">Passed Birthdays (This Year)</option>
+                  <option value="upcoming">Upcoming</option>
+                  <option value="passed">Passed (This Year)</option>
                   <option value="thisMonth">This Month</option>
                 </Form.Select>
               </Col>
@@ -1347,43 +1463,31 @@ const AdminDashboard = () => {
                 <Form.Select size="sm" value={birthdaySort} onChange={(e) => setBirthdaySort(e.target.value)}>
                   <option value="date">Sort by Date</option>
                   <option value="name">Sort by Name</option>
-                  <option value="department">Sort by Department</option>
+                  <option value="department">Sort by Dept</option>
                   <option value="month">Sort by Month</option>
                 </Form.Select>
               </Col>
               <Col xs={6} md={1}>
-                <Button
-                  variant="outline-secondary"
-                  size="sm"
-                  onClick={() => setBirthdaySortOrder(birthdaySortOrder === 'asc' ? 'desc' : 'asc')}
-                  className="w-100"
-                >
+                <Button variant="outline-secondary" size="sm" onClick={() => setBirthdaySortOrder(birthdaySortOrder === 'asc' ? 'desc' : 'asc')} className="w-100">
                   {birthdaySortOrder === 'asc' ? <FaSortUp /> : <FaSortDown />}
                 </Button>
               </Col>
               <Col xs={12} md={2}>
-                <Button
-                  variant="outline-danger"
-                  size="sm"
-                  onClick={() => {
-                    setBirthdaySearch('');
-                    setBirthdayFilter('all');
-                    setBirthdayDepartmentFilter('all');
-                    setBirthdaySort('date');
-                    setBirthdaySortOrder('asc');
-                  }}
-                  className="w-100"
-                >
+                <Button variant="outline-danger" size="sm" onClick={() => {
+                  setBirthdaySearch('');
+                  setBirthdayFilter('all');
+                  setBirthdayDepartmentFilter('all');
+                  setBirthdaySort('date');
+                  setBirthdaySortOrder('asc');
+                }} className="w-100">
                   <FaFilter className="me-1" size={12} />
-                  Clear Filters
+                  Clear
                 </Button>
               </Col>
             </Row>
 
-            {/* Birthdays Table - SHOW ALL EMPLOYEES (No Pagination) */}
             <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 350px)', overflowY: 'auto' }}>
               <Table striped hover className="mb-0 align-middle">
-                {/* Update the table headers */}
                 <thead className="bg-light sticky-top">
                   <tr className="small">
                     <th className="fw-normal text-center" style={{ width: '5%' }}>#</th>
@@ -1459,8 +1563,6 @@ const AdminDashboard = () => {
                 </tbody>
               </Table>
             </div>
-
-            {/* Show total count */}
             {filteredBirthdays.length > 0 && (
               <div className="mt-3 text-center text-muted small">
                 Showing {filteredBirthdays.length} of {allBirthdays.length} birthdays
@@ -1469,7 +1571,7 @@ const AdminDashboard = () => {
           </Card.Body>
         </Card>
       ) : activeTab === 'anniversaries' ? (
-        // Complete Anniversaries List Section - SHOW ALL EMPLOYEES
+        // Anniversaries Tab
         <Card className="border-0 shadow-sm">
           <Card.Header className="bg-gradient py-3" style={{ background: 'linear-gradient(135deg, #ffd700 0%, #ffed4e 100%)' }}>
             <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
@@ -1486,7 +1588,6 @@ const AdminDashboard = () => {
             </div>
           </Card.Header>
           <Card.Body className="p-3">
-            {/* Filters */}
             <Row className="mb-3 g-2">
               <Col xs={12} md={3}>
                 <div className="d-flex align-items-center bg-light rounded-3 p-1">
@@ -1505,8 +1606,8 @@ const AdminDashboard = () => {
                 <Form.Select size="sm" value={anniversaryFilter} onChange={(e) => setAnniversaryFilter(e.target.value)}>
                   <option value="all">All Anniversaries</option>
                   <option value="today">Today's Anniversaries</option>
-                  <option value="upcoming">Upcoming Anniversaries</option>
-                  <option value="passed">Passed Anniversaries (This Year)</option>
+                  <option value="upcoming">Upcoming</option>
+                  <option value="passed">Passed (This Year)</option>
                   <option value="thisMonth">This Month</option>
                 </Form.Select>
               </Col>
@@ -1522,41 +1623,30 @@ const AdminDashboard = () => {
                 <Form.Select size="sm" value={anniversarySort} onChange={(e) => setAnniversarySort(e.target.value)}>
                   <option value="date">Sort by Date</option>
                   <option value="name">Sort by Name</option>
-                  <option value="department">Sort by Department</option>
+                  <option value="department">Sort by Dept</option>
                   <option value="years">Sort by Years</option>
                   <option value="month">Sort by Month</option>
                 </Form.Select>
               </Col>
               <Col xs={6} md={1}>
-                <Button
-                  variant="outline-secondary"
-                  size="sm"
-                  onClick={() => setAnniversarySortOrder(anniversarySortOrder === 'asc' ? 'desc' : 'asc')}
-                  className="w-100"
-                >
+                <Button variant="outline-secondary" size="sm" onClick={() => setAnniversarySortOrder(anniversarySortOrder === 'asc' ? 'desc' : 'asc')} className="w-100">
                   {anniversarySortOrder === 'asc' ? <FaSortUp /> : <FaSortDown />}
                 </Button>
               </Col>
               <Col xs={12} md={2}>
-                <Button
-                  variant="outline-warning"
-                  size="sm"
-                  onClick={() => {
-                    setAnniversarySearch('');
-                    setAnniversaryFilter('all');
-                    setAnniversaryDepartmentFilter('all');
-                    setAnniversarySort('date');
-                    setAnniversarySortOrder('asc');
-                  }}
-                  className="w-100"
-                >
+                <Button variant="outline-warning" size="sm" onClick={() => {
+                  setAnniversarySearch('');
+                  setAnniversaryFilter('all');
+                  setAnniversaryDepartmentFilter('all');
+                  setAnniversarySort('date');
+                  setAnniversarySortOrder('asc');
+                }} className="w-100">
                   <FaFilter className="me-1" size={12} />
-                  Clear Filters
+                  Clear
                 </Button>
               </Col>
             </Row>
 
-            {/* Anniversaries Table - SHOW ALL EMPLOYEES (No Pagination) */}
             <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 350px)', overflowY: 'auto' }}>
               <Table striped hover className="mb-0 align-middle">
                 <thead className="bg-light sticky-top">
@@ -1565,7 +1655,7 @@ const AdminDashboard = () => {
                     <th className="fw-normal" style={{ width: '20%' }}>Employee</th>
                     <th className="fw-normal d-none d-md-table-cell" style={{ width: '15%' }}>Department</th>
                     <th className="fw-normal" style={{ width: '12%' }}>Joining Date</th>
-                    <th className="fw-normal" style={{ width: '15%' }}>Years Completed</th>
+                    <th className="fw-normal" style={{ width: '15%' }}>Years</th>
                     <th className="fw-normal" style={{ width: '15%' }}>Days Left</th>
                     <th className="fw-normal" style={{ width: '10%' }}>Status</th>
                     <th className="fw-normal" style={{ width: '8%' }}>Celebration</th>
@@ -1618,18 +1708,10 @@ const AdminDashboard = () => {
                           )}
                         </td>
                         <td className="small">
-                          {emp.yearsCompleted === 1 && (
-                            <Badge bg="info" pill>1st Year 🎉</Badge>
-                          )}
-                          {emp.yearsCompleted === 5 && (
-                            <Badge bg="primary" pill>5 Years 🏆</Badge>
-                          )}
-                          {emp.yearsCompleted === 10 && (
-                            <Badge bg="success" pill>10 Years 🎊</Badge>
-                          )}
-                          {emp.yearsCompleted === 20 && (
-                            <Badge bg="danger" pill>20 Years 👑</Badge>
-                          )}
+                          {emp.yearsCompleted === 1 && <Badge bg="info" pill>1st Year 🎉</Badge>}
+                          {emp.yearsCompleted === 5 && <Badge bg="primary" pill>5 Years 🏆</Badge>}
+                          {emp.yearsCompleted === 10 && <Badge bg="success" pill>10 Years 🎊</Badge>}
+                          {emp.yearsCompleted === 20 && <Badge bg="danger" pill>20 Years 👑</Badge>}
                           {![1, 5, 10, 20].includes(emp.yearsCompleted) && emp.yearsCompleted > 0 && (
                             <Badge bg="secondary" pill>{emp.yearsCompleted} Years</Badge>
                           )}
@@ -1647,8 +1729,6 @@ const AdminDashboard = () => {
                 </tbody>
               </Table>
             </div>
-
-            {/* Show total count */}
             {filteredAnniversaries.length > 0 && (
               <div className="mt-3 text-center text-muted small">
                 Showing {filteredAnniversaries.length} of {allAnniversaries.length} anniversaries
@@ -1657,7 +1737,7 @@ const AdminDashboard = () => {
           </Card.Body>
         </Card>
       ) : (
-        // Overview Tab Content (Keep the existing overview content)
+        // Overview Tab Content
         <>
           {/* Today's Events Widget */}
           {todayEvents && todayEvents.total > 0 && (
@@ -1695,20 +1775,10 @@ const AdminDashboard = () => {
                 <div className="mt-3 pt-2 border-top small text-muted">
                   <span className="fw-semibold">Total Celebrations Today:</span>
                   <Badge bg="success" pill className="ms-1">{todayEvents.total}</Badge>
-                  <Button
-                    variant="link"
-                    size="sm"
-                    className="ms-3 p-0"
-                    onClick={() => setActiveTab('birthdays')}
-                  >
+                  <Button variant="link" size="sm" className="ms-3 p-0" onClick={() => setActiveTab('birthdays')}>
                     View All Birthdays →
                   </Button>
-                  <Button
-                    variant="link"
-                    size="sm"
-                    className="ms-2 p-0"
-                    onClick={() => setActiveTab('anniversaries')}
-                  >
+                  <Button variant="link" size="sm" className="ms-2 p-0" onClick={() => setActiveTab('anniversaries')}>
                     View All Anniversaries →
                   </Button>
                 </div>
@@ -1813,28 +1883,11 @@ const AdminDashboard = () => {
               </h5>
               <div className="d-flex gap-2">
                 <InputGroup size="sm" style={{ width: '250px' }}>
-                  <InputGroup.Text>
-                    <FaSearch size={12} />
-                  </InputGroup.Text>
-                  <Form.Control
-                    type="text"
-                    placeholder="Search by name or ID..."
-                    value={attendanceSearchTerm}
-                    onChange={(e) => setAttendanceSearchTerm(e.target.value)}
-                  />
-                  {attendanceSearchTerm && (
-                    <Button
-                      variant="outline-secondary"
-                      onClick={() => setAttendanceSearchTerm('')}
-                      size="sm"
-                    >
-                      <FaTimesCircle size={12} />
-                    </Button>
-                  )}
+                  <InputGroup.Text><FaSearch size={12} /></InputGroup.Text>
+                  <Form.Control type="text" placeholder="Search by name or ID..." value={attendanceSearchTerm} onChange={(e) => setAttendanceSearchTerm(e.target.value)} />
+                  {attendanceSearchTerm && <Button variant="outline-secondary" onClick={() => setAttendanceSearchTerm('')} size="sm"><FaTimesCircle size={12} /></Button>}
                 </InputGroup>
-                <Badge bg="dark" className="px-3 py-2">
-                  {filteredAttendance.length} / {todayAttendance.length} Records
-                </Badge>
+                <Badge bg="dark" className="px-3 py-2">{filteredAttendance.length} / {todayAttendance.length} Records</Badge>
               </div>
             </Card.Header>
             <Card.Body className="p-0">
@@ -1856,33 +1909,20 @@ const AdminDashboard = () => {
                         <tr key={att.id || index}>
                           <td className="text-center">{index + 1}</td>
                           <td className="small">
-                            <div className="text-truncate" style={{ maxWidth: '120px' }}>
-                              {att.first_name} {att.last_name}
-                            </div>
+                            <div className="text-truncate" style={{ maxWidth: '120px' }}>{att.first_name} {att.last_name}</div>
                             <small className="text-muted">{att.employee_id}</small>
                           </td>
-                          <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>
-                            {att.department}
-                          </td>
+                          <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>{att.department}</td>
                           <td className={`small ${att.clock_in ? 'text-success' : 'text-muted'}`}>
                             {formatTime(att.clock_in)}
                             {att.late_minutes > 0 && <Badge bg="danger" className="ms-1" pill>Late</Badge>}
                           </td>
-                          <td className={`small d-none d-sm-table-cell ${att.clock_out ? 'text-danger' : 'text-muted'}`}>
-                            {formatTime(att.clock_out)}
-                          </td>
+                          <td className={`small d-none d-sm-table-cell ${att.clock_out ? 'text-danger' : 'text-muted'}`}>{formatTime(att.clock_out)}</td>
                           <td>{getStatusBadge(att)}</td>
                         </tr>
                       ))
                     ) : (
-                      <tr>
-                        <td colSpan="6" className="text-center py-4">
-                          <FaClock size={30} className="text-muted mb-2 opacity-50" />
-                          <p className="text-muted mb-0">
-                            {attendanceSearchTerm ? 'No matching attendance records found' : 'No attendance records for today'}
-                          </p>
-                        </td>
-                      </tr>
+                      <tr><td colSpan="6" className="text-center py-4"><FaClock size={30} className="text-muted mb-2 opacity-50" /><p className="text-muted mb-0">No attendance records for today</p></td></tr>
                     )}
                   </tbody>
                 </Table>
@@ -1893,34 +1933,14 @@ const AdminDashboard = () => {
           {/* Pending Leave Requests */}
           <Card className="mb-4 border-0 shadow-sm">
             <Card.Header className="bg-light d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center py-3 gap-2">
-              <h5 className="mb-0 text-dark d-flex align-items-center">
-                <FaCalendarAlt className="me-2" />
-                <span>Pending Leave Requests</span>
-              </h5>
+              <h5 className="mb-0 text-dark d-flex align-items-center"><FaCalendarAlt className="me-2" /><span>Pending Leave Requests</span></h5>
               <div className="d-flex gap-2">
                 <InputGroup size="sm" style={{ width: '250px' }}>
-                  <InputGroup.Text>
-                    <FaSearch size={12} />
-                  </InputGroup.Text>
-                  <Form.Control
-                    type="text"
-                    placeholder="Search by name or ID..."
-                    value={leaveSearchTerm}
-                    onChange={(e) => setLeaveSearchTerm(e.target.value)}
-                  />
-                  {leaveSearchTerm && (
-                    <Button
-                      variant="outline-secondary"
-                      onClick={() => setLeaveSearchTerm('')}
-                      size="sm"
-                    >
-                      <FaTimesCircle size={12} />
-                    </Button>
-                  )}
+                  <InputGroup.Text><FaSearch size={12} /></InputGroup.Text>
+                  <Form.Control type="text" placeholder="Search by name or ID..." value={leaveSearchTerm} onChange={(e) => setLeaveSearchTerm(e.target.value)} />
+                  {leaveSearchTerm && <Button variant="outline-secondary" onClick={() => setLeaveSearchTerm('')} size="sm"><FaTimesCircle size={12} /></Button>}
                 </InputGroup>
-                <Badge bg="light" text="dark" className="px-3 py-2">
-                  {filteredLeaveRequests.length} / {leaveRequests.length} Pending
-                </Badge>
+                <Badge bg="light" text="dark" className="px-3 py-2">{filteredLeaveRequests.length} / {leaveRequests.length} Pending</Badge>
               </div>
             </Card.Header>
             <Card.Body className="p-0">
@@ -1941,34 +1961,15 @@ const AdminDashboard = () => {
                       filteredLeaveRequests.map((leave, index) => (
                         <tr key={leave.id}>
                           <td className="text-center">{index + 1}</td>
-                          <td className="small">
-                            <div className="text-truncate" style={{ maxWidth: '100px' }}>
-                              {leave.first_name} {leave.last_name}
-                            </div>
-                            <small className="text-muted">{leave.employee_id}</small>
-                          </td>
-                          <td className="d-none d-md-table-cell">
-                            <Badge bg="secondary">{leave.leave_type}</Badge>
-                          </td>
-                          <td className="small">
-                            <span className="text-nowrap">{new Date(leave.start_date).toLocaleDateString()}</span>
-                            {leave.start_date !== leave.end_date && (
-                              <span className="text-nowrap d-block">- {new Date(leave.end_date).toLocaleDateString()}</span>
-                            )}
-                          </td>
+                          <td className="small"><div className="text-truncate" style={{ maxWidth: '100px' }}>{leave.first_name} {leave.last_name}</div><small className="text-muted">{leave.employee_id}</small></td>
+                          <td className="d-none d-md-table-cell"><Badge bg="secondary">{leave.leave_type}</Badge></td>
+                          <td className="small"><span className="text-nowrap">{new Date(leave.start_date).toLocaleDateString()}</span>{leave.start_date !== leave.end_date && <span className="text-nowrap d-block">- {new Date(leave.end_date).toLocaleDateString()}</span>}</td>
                           <td>{leave.days_count || 1}</td>
                           <td><Badge bg="warning">Pending</Badge></td>
                         </tr>
                       ))
                     ) : (
-                      <tr>
-                        <td colSpan="6" className="text-center py-4">
-                          <FaCalendarAlt size={30} className="text-muted mb-2 opacity-50" />
-                          <p className="text-muted mb-0">
-                            {leaveSearchTerm ? 'No matching leave requests found' : 'No pending leave requests'}
-                          </p>
-                        </td>
-                      </tr>
+                      <tr><td colSpan="6" className="text-center py-4"><FaCalendarAlt size={30} className="text-muted mb-2 opacity-50" /><p className="text-muted mb-0">No pending leave requests</p></td></tr>
                     )}
                   </tbody>
                 </Table>
@@ -1984,8 +1985,12 @@ const AdminDashboard = () => {
                 <span>Employee Leave Balances</span>
               </h5>
               <div className="d-flex gap-2">
-                <Badge bg="info" className="px-3 py-2">Avg: {averageLeavesPerEmployee} days</Badge>
-                <Badge bg="warning" className="px-3 py-2">Low Balance: {employeesWithLowBalance}</Badge>
+                <Badge bg="info" className="px-3 py-2">
+                  Avg: {averageLeavesPerEmployee} days
+                </Badge>
+                <Badge bg="warning" className="px-3 py-2">
+                  Low Balance: {employeesWithLowBalance}
+                </Badge>
               </div>
             </Card.Header>
             <Card.Body>
@@ -2004,7 +2009,11 @@ const AdminDashboard = () => {
                   </div>
                 </Col>
                 <Col xs={6} md={3}>
-                  <Form.Select size="sm" value={filterDepartment} onChange={(e) => setFilterDepartment(e.target.value)}>
+                  <Form.Select
+                    size="sm"
+                    value={filterDepartment}
+                    onChange={(e) => setFilterDepartment(e.target.value)}
+                  >
                     <option value="all">All Departments</option>
                     {departments.filter(d => d !== 'all').map(dept => (
                       <option key={dept} value={dept}>{dept}</option>
@@ -2012,43 +2021,100 @@ const AdminDashboard = () => {
                   </Form.Select>
                 </Col>
                 <Col xs={6} md={3}>
-                  <Form.Select size="sm" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                  <Form.Select
+                    size="sm"
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                  >
                     <option value="name">Sort by Name</option>
                     <option value="balance">Sort by Balance</option>
                     <option value="department">Sort by Department</option>
                   </Form.Select>
                 </Col>
+                <Col xs={12} md={2}>
+                  <Button
+                    variant="outline-secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSearchTerm('');
+                      setFilterDepartment('all');
+                      setSortBy('name');
+                    }}
+                    className="w-100"
+                  >
+                    <FaSyncAlt className="me-1" size={12} />
+                    Reset
+                  </Button>
+                </Col>
               </Row>
-              <div className="table-responsive" style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                <Table striped size="sm" className="mb-0">
-                  <thead className="bg-light sticky-top">
+
+              <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                <Table striped hover size="sm" className="mb-0">
+                  <thead className="bg-light sticky-top" style={{ top: 0, zIndex: 10 }}>
                     <tr className="small">
-                      <th className="fw-normal text-center">#</th>
-                      <th className="fw-normal">Employee</th>
-                      <th className="fw-normal d-none d-md-table-cell">Department</th>
-                      <th className="fw-normal">Available</th>
-                      <th className="fw-normal d-none d-sm-table-cell">Status</th>
+                      <th className="fw-normal text-center" style={{ width: '5%' }}>#</th>
+                      <th className="fw-normal" style={{ width: '20%' }}>Employee</th>
+                      <th className="fw-normal d-none d-md-table-cell" style={{ width: '15%' }}>Department</th>
+                      <th className="fw-normal" style={{ width: '12%' }}>Total Accrued</th>
+                      <th className="fw-normal" style={{ width: '10%' }}>Used</th>
+                      <th className="fw-normal" style={{ width: '12%' }}>Available</th>
+                      <th className="fw-normal" style={{ width: '12%' }}>Status</th>
+                      <th className="fw-normal d-none d-lg-table-cell" style={{ width: '14%' }}>Probation</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredEmployees.length > 0 ? (
                       filteredEmployees.map((emp, index) => {
-                        const available = parseFloat(emp.leaveBalance?.available) || 0;
-                        const statusColor = available <= 0 ? 'danger' : available < 3 ? 'warning' : 'success';
+                        // Get values from leaveBalance
+                        const totalAccrued = parseFloat(emp.leaveBalance?.total_accrued) || 0;
+                        const used = parseFloat(emp.leaveBalance?.used) || 0;
+
+                        // CRITICAL FIX: Calculate available = total_accrued - used
+                        const available = Math.max(0, totalAccrued - used);
+
+                        const isProbation = !emp.leaveBalance?.is_probation_complete && emp.leaveBalance?.months_completed < 6;
+                        const monthsCompleted = emp.leaveBalance?.months_completed || 0;
+
+                        let statusColor = 'success';
+                        let statusText = 'Good';
+
+                        if (available <= 0) {
+                          statusColor = 'danger';
+                          statusText = 'No Leaves';
+                        } else if (available < 3) {
+                          statusColor = 'warning';
+                          statusText = 'Low';
+                        }
+
                         return (
-                          <tr key={emp.id}>
-                            <td className="text-center">{index + 1}</td>
+                          <tr key={emp.id} className={isProbation ? 'table-light' : ''}>
+                            <td className="text-center small">{index + 1}</td>
                             <td className="small">
-                              <div className="text-truncate" style={{ maxWidth: '120px' }}>
+                              <div className="fw-semibold text-truncate" style={{ maxWidth: '150px' }} title={`${emp.first_name} ${emp.last_name}`}>
                                 {emp.first_name} {emp.last_name}
                               </div>
                               <small className="text-muted">{emp.employee_id}</small>
+                              {isProbation && (
+                                <Badge bg="info" pill className="ms-1" style={{ fontSize: '8px' }}>
+                                  Probation
+                                </Badge>
+                              )}
                             </td>
-                            <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '100px' }}>
-                              {emp.department}
+                            <td className="small d-none d-md-table-cell text-truncate" style={{ maxWidth: '120px' }} title={emp.department}>
+                              {emp.department || 'N/A'}
                             </td>
-                            <td><Badge bg={statusColor} pill>{available.toFixed(1)}</Badge></td>
-                            <td className="d-none d-sm-table-cell">
+                            <td className="small fw-bold text-primary">
+                              {totalAccrued.toFixed(1)}
+                            </td>
+                            <td className="small text-danger">
+                              {used.toFixed(1)}
+                            </td>
+                            <td className="small">
+                              <Badge bg={statusColor} pill className="px-2 py-1">
+                                {available.toFixed(1)}
+                              </Badge>
+                            </td>
+                            <td>
                               {available <= 0 ? (
                                 <Badge bg="danger" pill>No Leaves</Badge>
                               ) : available < 3 ? (
@@ -2057,19 +2123,55 @@ const AdminDashboard = () => {
                                 <Badge bg="success" pill>Good</Badge>
                               )}
                             </td>
+                            <td className="small d-none d-lg-table-cell">
+                              {isProbation ? (
+                                <Badge bg="info" pill>
+                                  {monthsCompleted}/6 months
+                                </Badge>
+                              ) : (
+                                <Badge bg="success" pill>
+                                  Completed
+                                </Badge>
+                              )}
+                            </td>
                           </tr>
                         );
                       })
                     ) : (
                       <tr>
-                        <td colSpan="5" className="text-center py-4">
-                          <p className="text-muted mb-0">No employees found</p>
+                        <td colSpan="8" className="text-center py-4">
+                          <p className="text-muted mb-0 small">No employees found</p>
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </Table>
               </div>
+
+              {/* Summary Footer */}
+              {filteredEmployees.length > 0 && (
+                <div className="mt-3 pt-2 border-top">
+                  <div className="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <small className="text-muted">
+                      Showing {filteredEmployees.length} of {employeeLeaveBalances.length} employees
+                    </small>
+                    <div className="d-flex gap-3">
+                      <small className="text-muted">
+                        <Badge bg="success" pill className="me-1">&nbsp;</Badge>
+                        Good Balance (&ge;3 days)
+                      </small>
+                      <small className="text-muted">
+                        <Badge bg="warning" pill className="me-1">&nbsp;</Badge>
+                        Low Balance (&lt;3 days)
+                      </small>
+                      <small className="text-muted">
+                        <Badge bg="danger" pill className="me-1">&nbsp;</Badge>
+                        No Balance (0 days)
+                      </small>
+                    </div>
+                  </div>
+                </div>
+              )}
             </Card.Body>
           </Card>
         </>
@@ -2077,39 +2179,14 @@ const AdminDashboard = () => {
 
       {/* Export Modal */}
       <Modal show={showExportModal} onHide={() => setShowExportModal(false)} centered>
-        <Modal.Header closeButton>
-          <Modal.Title className="h6"><FaFileAlt className="me-2" />Export Reports</Modal.Title>
-        </Modal.Header>
+        <Modal.Header closeButton><Modal.Title className="h6"><FaFileAlt className="me-2" />Export Reports</Modal.Title></Modal.Header>
         <Modal.Body>
           <Form>
-            <Form.Group className="mb-3">
-              <Form.Label>Report Type</Form.Label>
-              <Form.Select value={exportType} onChange={(e) => setExportType(e.target.value)}>
-                <option value="attendance">Attendance Report</option>
-                <option value="leave">Leave Report</option>
-                <option value="employees">Employees List</option>
-              </Form.Select>
-            </Form.Group>
-            {exportType !== 'employees' && (
-              <>
-                <Form.Group className="mb-3">
-                  <Form.Label>Start Date</Form.Label>
-                  <Form.Control type="date" value={exportDateRange.start} onChange={(e) => setExportDateRange({ ...exportDateRange, start: e.target.value })} />
-                </Form.Group>
-                <Form.Group className="mb-3">
-                  <Form.Label>End Date</Form.Label>
-                  <Form.Control type="date" value={exportDateRange.end} onChange={(e) => setExportDateRange({ ...exportDateRange, end: e.target.value })} />
-                </Form.Group>
-              </>
-            )}
+            <Form.Group className="mb-3"><Form.Label>Report Type</Form.Label><Form.Select value={exportType} onChange={(e) => setExportType(e.target.value)}><option value="attendance">Attendance Report</option><option value="leave">Leave Report</option><option value="employees">Employees List</option></Form.Select></Form.Group>
+            {exportType !== 'employees' && (<><Form.Group className="mb-3"><Form.Label>Start Date</Form.Label><Form.Control type="date" value={exportDateRange.start} onChange={(e) => setExportDateRange({ ...exportDateRange, start: e.target.value })} /></Form.Group><Form.Group className="mb-3"><Form.Label>End Date</Form.Label><Form.Control type="date" value={exportDateRange.end} onChange={(e) => setExportDateRange({ ...exportDateRange, end: e.target.value })} /></Form.Group></>)}
           </Form>
         </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" size="sm" onClick={() => setShowExportModal(false)}>Cancel</Button>
-          <Button variant="success" size="sm" onClick={handleExport} disabled={exporting}>
-            {exporting ? <><Spinner size="sm" animation="border" className="me-2" />Exporting...</> : <><FaDownload className="me-2" />Export</>}
-          </Button>
-        </Modal.Footer>
+        <Modal.Footer><Button variant="secondary" size="sm" onClick={() => setShowExportModal(false)}>Cancel</Button><Button variant="success" size="sm" onClick={handleExport} disabled={exporting}>{exporting ? <><Spinner size="sm" animation="border" className="me-2" />Exporting...</> : <><FaDownload className="me-2" />Export</>}</Button></Modal.Footer>
       </Modal>
     </div>
   );

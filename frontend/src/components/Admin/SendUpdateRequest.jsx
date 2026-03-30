@@ -10,7 +10,7 @@ import {
   FaEnvelope, FaPhone, FaMapMarkerAlt, FaUniversity,
   FaCalendarAlt, FaClock, FaUserTie, FaFileAlt,
   FaCreditCard, FaHeartbeat, FaFilePdf, FaFileWord,
-  FaFileImage, FaUpload
+  FaFileImage, FaUpload, FaTimes
 } from 'react-icons/fa';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
@@ -27,7 +27,7 @@ const SendUpdateRequest = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
 
-  // Field options for employee information
+  // In SendUpdateRequest.jsx - Update the fieldOptions array
   const fieldOptions = [
     {
       value: 'personal',
@@ -49,9 +49,9 @@ const SendUpdateRequest = () => {
     },
     {
       value: 'bank',
-      label: 'Bank Details',
+      label: 'Bank Details & ID Proofs',
       icon: <FaUniversity className="text-warning" />,
-      fields: ['bank_account_name', 'account_number', 'ifsc_code', 'branch_name', 'pan_number']
+      fields: ['bank_account_name', 'account_number', 'ifsc_code', 'branch_name', 'pan_number', 'aadhar_number']  // ✅ Added aadhar_number
     },
     {
       value: 'employment',
@@ -110,29 +110,26 @@ const SendUpdateRequest = () => {
       const response = await axios.get(API_ENDPOINTS.ADMIN_UPDATES_EMPLOYEES);
 
       console.log('✅ API Response:', response);
-      console.log('📦 Response data:', response.data);
-      console.log('📦 Data type:', typeof response.data);
-      console.log('📦 Is array?', Array.isArray(response.data));
+
+      let employeesData = [];
 
       if (Array.isArray(response.data)) {
-        setEmployees(response.data);
-        setFilteredEmployees(response.data);
-        console.log(`✅ Loaded ${response.data.length} employees`);
+        employeesData = response.data;
       } else if (response.data && response.data.data && Array.isArray(response.data.data)) {
-        setEmployees(response.data.data);
-        setFilteredEmployees(response.data.data);
+        employeesData = response.data.data;
+      } else if (response.data && response.data.employees && Array.isArray(response.data.employees)) {
+        employeesData = response.data.employees;
       } else {
-        console.warn('Unexpected response format:', response.data);
-        setEmployees([]);
-        setFilteredEmployees([]);
+        employeesData = [];
       }
 
+      console.log(`✅ Loaded ${employeesData.length} employees`);
+      setEmployees(employeesData);
+      setFilteredEmployees(employeesData);
       setMessage({ type: '', text: '' });
     } catch (error) {
       console.error('❌ Error fetching employees:', error);
       console.error('Error response:', error.response?.data);
-      console.error('Error status:', error.response?.status);
-
       setMessage({
         type: 'danger',
         text: error.response?.data?.message || 'Failed to load employees'
@@ -143,6 +140,8 @@ const SendUpdateRequest = () => {
   };
 
   const applyFilters = () => {
+    console.log('🔍 Applying filters - Search:', searchTerm, 'Department:', departmentFilter);
+
     let filtered = [...employees];
 
     // Apply search filter
@@ -159,14 +158,21 @@ const SendUpdateRequest = () => {
           department.includes(term) ||
           designation.includes(term);
       });
+      console.log(`🔍 Search filter: ${filtered.length} employees found`);
     }
 
     // Apply department filter
     if (departmentFilter !== 'all') {
       filtered = filtered.filter(emp => emp.department === departmentFilter);
+      console.log(`🔍 Department filter: ${filtered.length} employees found`);
     }
 
     setFilteredEmployees(filtered);
+
+    // Clear selected employee if current selection is not in filtered list
+    if (selectedEmployee && !filtered.some(emp => emp.employee_id === selectedEmployee)) {
+      setSelectedEmployee('');
+    }
   };
 
   const departments = ['all', ...new Set(employees.map(emp => emp.department).filter(Boolean))];
@@ -177,7 +183,7 @@ const SendUpdateRequest = () => {
         ? prev.filter(f => f !== field)
         : [...prev, field]
     );
-    
+
     // If unselecting documents, clear selected documents
     if (field === 'documents' && selectedFields.includes('documents')) {
       setSelectedDocuments([]);
@@ -274,6 +280,9 @@ const SendUpdateRequest = () => {
       setSearchTerm('');
       setDepartmentFilter('all');
 
+      // Refresh employee list
+      await fetchEmployees();
+
       // Clear success message after 3 seconds
       setTimeout(() => {
         setMessage({ type: '', text: '' });
@@ -290,10 +299,19 @@ const SendUpdateRequest = () => {
     }
   };
 
-  const clearSearch = () => {
+  const clearFilters = () => {
     setSearchTerm('');
     setDepartmentFilter('all');
+    setSelectedEmployee('');
   };
+
+  // Get selected employee details for display
+  const getSelectedEmployeeDetails = () => {
+    if (!selectedEmployee) return null;
+    return filteredEmployees.find(emp => emp.employee_id === selectedEmployee);
+  };
+
+  const selectedEmpDetails = getSelectedEmployeeDetails();
 
   return (
     <div className="p-2 p-md-3 p-lg-4" style={{ backgroundColor: '#f8f9fc', minHeight: '100vh' }}>
@@ -339,7 +357,7 @@ const SendUpdateRequest = () => {
 
               {/* Search and Filter - Responsive */}
               <Row className="mb-3 g-2">
-                <Col xs={12} md={8}>
+                <Col xs={12} md={6}>
                   <InputGroup size="sm">
                     <InputGroup.Text className="bg-light border-0">
                       <FaSearch size={12} className="text-muted" />
@@ -358,7 +376,7 @@ const SendUpdateRequest = () => {
                         onClick={() => setSearchTerm('')}
                         className="border-0"
                       >
-                        <FaTimesCircle size={12} />
+                        <FaTimes size={12} />
                       </Button>
                     )}
                   </InputGroup>
@@ -376,6 +394,17 @@ const SendUpdateRequest = () => {
                     ))}
                   </Form.Select>
                 </Col>
+                <Col xs={12} md={2}>
+                  <Button
+                    variant="outline-secondary"
+                    size="sm"
+                    onClick={clearFilters}
+                    className="w-100"
+                    disabled={!searchTerm && departmentFilter === 'all'}
+                  >
+                    Clear Filters
+                  </Button>
+                </Col>
               </Row>
 
               {/* Employee Dropdown */}
@@ -388,17 +417,39 @@ const SendUpdateRequest = () => {
                 className="mb-2"
               >
                 <option value="">-- Choose an employee --</option>
-                {filteredEmployees.map(emp => (
-                  <option key={emp.employee_id} value={emp.employee_id}>
-                    {emp.first_name} {emp.last_name} - {emp.designation || 'N/A'} ({emp.employee_id})
-                  </option>
-                ))}
+                {filteredEmployees.length > 0 ? (
+                  filteredEmployees.map(emp => (
+                    <option key={emp.employee_id} value={emp.employee_id}>
+                      {emp.first_name} {emp.last_name} - {emp.designation || 'N/A'} ({emp.employee_id})
+                    </option>
+                  ))
+                ) : (
+                  <option disabled>No employees found matching your search</option>
+                )}
               </Form.Select>
+
+              {/* Show selected employee details */}
+              {selectedEmpDetails && (
+                <div className="mt-2 p-2 bg-light rounded">
+                  <div className="d-flex align-items-center gap-2 flex-wrap">
+                    <Badge bg="primary" pill>
+                      <FaUser className="me-1" size={10} />
+                      {selectedEmpDetails.first_name} {selectedEmpDetails.last_name}
+                    </Badge>
+                    <Badge bg="info" pill>
+                      ID: {selectedEmpDetails.employee_id}
+                    </Badge>
+                    <Badge bg="secondary" pill>
+                      {selectedEmpDetails.department || 'N/A'}
+                    </Badge>
+                  </div>
+                </div>
+              )}
 
               {/* Filter Info */}
               {(searchTerm || departmentFilter !== 'all') && (
                 <div className="mt-2 d-flex flex-wrap align-items-center gap-2">
-                  <small className="text-muted">Active filters:</small>
+                  <small className="text-muted">Found <strong>{filteredEmployees.length}</strong> employee{filteredEmployees.length !== 1 ? 's' : ''}:</small>
                   {departmentFilter !== 'all' && (
                     <Badge bg="info" className="px-2 py-1">
                       Dept: {departmentFilter}
@@ -409,14 +460,6 @@ const SendUpdateRequest = () => {
                       Search: "{searchTerm}"
                     </Badge>
                   )}
-                  <Button
-                    variant="link"
-                    size="sm"
-                    onClick={clearSearch}
-                    className="p-0 ms-2"
-                  >
-                    Clear filters
-                  </Button>
                 </div>
               )}
 
@@ -529,7 +572,7 @@ const SendUpdateRequest = () => {
                     );
                   })}
                 </div>
-                
+
                 {/* Document Types Summary */}
                 {selectedFields.includes('documents') && selectedDocuments.length > 0 && (
                   <>
@@ -554,7 +597,7 @@ const SendUpdateRequest = () => {
                     </div>
                   </>
                 )}
-                
+
                 <small className="text-muted d-block mt-2 small">
                   Total fields to update: {
                     selectedFields.reduce((total, field) => {
@@ -573,7 +616,7 @@ const SendUpdateRequest = () => {
                 type="submit"
                 variant="primary"
                 size="sm"
-                disabled={loading || fetching}
+                disabled={loading || fetching || !selectedEmployee || selectedFields.length === 0}
                 className="px-4 w-100 w-md-auto"
               >
                 {loading ? (

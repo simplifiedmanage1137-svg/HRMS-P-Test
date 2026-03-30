@@ -243,7 +243,7 @@ export const NotificationProvider = ({ children }) => {
       )}
       
       {/* Add animation style */}
-      <style jsx>{`
+      <style>{`
         @keyframes slideIn {
           from {
             transform: translateX(100%);

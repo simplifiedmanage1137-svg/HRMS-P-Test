@@ -1,16 +1,16 @@
 // src/components/Employee/EmployeeUpdateSection.jsx
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, Button, Form, Alert, Spinner, 
+import {
+  Card, Button, Form, Alert, Spinner,
   Row, Col, Badge, Tab, Nav
 } from 'react-bootstrap';
 import { useAuth } from '../../context/AuthContext';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
-import { 
-  FaEdit, 
-  FaSave, 
-  FaTimes, 
+import {
+  FaEdit,
+  FaSave,
+  FaTimes,
   FaInfoCircle,
   FaCheckCircle,
   FaExclamationTriangle,
@@ -100,13 +100,13 @@ const EmployeeUpdateSection = () => {
         type: 'success',
         text: 'Update submitted successfully! Waiting for admin approval.'
       });
-      
+
       // Clear selected request after successful submission
       setTimeout(() => {
         setSelectedRequest(null);
         fetchPendingRequests();
       }, 2000);
-      
+
     } catch (error) {
       setMessage({
         type: 'danger',
@@ -134,7 +134,7 @@ const EmployeeUpdateSection = () => {
   };
 
   const getStatusBadge = (status) => {
-    switch(status) {
+    switch (status) {
       case 'pending':
         return <Badge bg="warning" pill className="d-inline-flex align-items-center"><FaHourglassHalf className="me-1" /> Pending</Badge>;
       case 'approved':
@@ -182,9 +182,9 @@ const EmployeeUpdateSection = () => {
 
       {/* Message Alert */}
       {message.text && (
-        <Alert 
-          variant={message.type} 
-          onClose={() => setMessage({ type: '', text: '' })} 
+        <Alert
+          variant={message.type}
+          onClose={() => setMessage({ type: '', text: '' })}
           dismissible
           className="mb-4 py-2"
         >
@@ -206,8 +206,8 @@ const EmployeeUpdateSection = () => {
                 Request ID: #{selectedRequest._id?.slice(-6) || 'N/A'}
               </small>
             </div>
-            <Button 
-              variant="outline-secondary" 
+            <Button
+              variant="outline-secondary"
               size="sm"
               onClick={handleCancel}
               className="d-inline-flex align-items-center ms-0 ms-md-auto"
@@ -491,10 +491,10 @@ const EmployeeUpdateSection = () => {
                 </div>
               )}
 
-              {/* Bank Details Tab */}
+             // In EmployeeUpdateSection.jsx - Update the bank section
               {activeTab === 'bank' && (
                 <div>
-                  <h6 className="mb-3 small">Bank Details</h6>
+                  <h6 className="mb-3 small">Bank Details & ID Proofs</h6>
                   <Row className="g-2 mb-3">
                     <Col xs={12} md={6}>
                       <Form.Group>
@@ -557,7 +557,32 @@ const EmployeeUpdateSection = () => {
                           value={formData.pan_number || ''}
                           onChange={handleInputChange}
                           size="sm"
+                          placeholder="e.g., ABCDE1234F"
                         />
+                      </Form.Group>
+                    </Col>
+                  </Row>
+
+                  {/* ✅ Added Aadhar Card Field */}
+                  <Row className="g-2 mb-3">
+                    <Col xs={12}>
+                      <Form.Group>
+                        <Form.Label className="small fw-semibold">
+                          <FaFileAlt className="me-1 text-primary" size={12} />
+                          Aadhar Card Number
+                        </Form.Label>
+                        <Form.Control
+                          type="text"
+                          name="aadhar_number"
+                          value={formData.aadhar_number || ''}
+                          onChange={handleInputChange}
+                          size="sm"
+                          placeholder="12-digit Aadhar number (e.g., 1234 5678 9012)"
+                          maxLength="14"
+                        />
+                        <Form.Text className="text-muted small">
+                          Enter 12-digit Aadhar number (spaces and dashes will be auto-formatted)
+                        </Form.Text>
                       </Form.Group>
                     </Col>
                   </Row>

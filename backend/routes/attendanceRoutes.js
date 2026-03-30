@@ -31,8 +31,8 @@ module.exports = (supabase, authenticateToken, requireAdmin) => {
     router.put('/regularization/:request_id/approve', authenticateToken, requireAdmin, attendanceController.approveRegularization);
     router.put('/regularization/:request_id/reject', authenticateToken, requireAdmin, attendanceController.rejectRegularization);
 
-    // Overtime endpoints (Admin only)
-    router.get('/overtime/:employee_id/:month/:year', authenticateToken, requireAdmin, attendanceController.getOvertimeSummary);
+    // Overtime endpoints (Admin or own data)
+    router.get('/overtime/:employee_id/:month/:year', authenticateToken, attendanceController.getOvertimeSummary);
 
     // Comp-off endpoints (Admin only)
     router.get('/comp-off/:employee_id', authenticateToken, requireAdmin, attendanceController.getCompOffBalance);

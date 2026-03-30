@@ -232,7 +232,9 @@ const EmployeeDashboard = () => {
 
   const fetchEmployeeData = async () => {
     try {
+      // ✅ FIX: Use correct endpoint - EMPLOYEE_PROFILE, not ATTENDANCE_REPORT
       const response = await axios.get(API_ENDPOINTS.EMPLOYEE_PROFILE(user.employeeId));
+      console.log('📋 Employee data:', response.data);
       setEmployee(response.data);
     } catch (error) {
       console.error('Error fetching employee:', error);
@@ -247,49 +249,53 @@ const EmployeeDashboard = () => {
       const response = await axios.get(API_ENDPOINTS.LEAVE_BALANCE(user.employeeId));
       console.log('Leave balance response:', response.data);
 
+      // ✅ FIX: Use correct field names from API response
       setLeaveBalance({
         available: parseFloat(response.data.available) || 0,
-        total_accrued: parseFloat(response.data.total_accrued) || 12,
+        total_accrued: parseFloat(response.data.total_accrued) || 0,
         used: parseFloat(response.data.used) || 0,
         pending: parseFloat(response.data.pending) || 0,
         comp_off_balance: parseFloat(response.data.comp_off_balance) || 0,
         total_comp_off_earned: parseFloat(response.data.total_comp_off_earned) || 0,
         total_comp_off_used: parseFloat(response.data.total_comp_off_used) || 0,
-        is_eligible: response.data.is_eligible || false
+        is_eligible: response.data.is_probation_complete || response.data.is_eligible || false,
+        months_completed: response.data.months_completed || 0,
+        is_probation_complete: response.data.is_probation_complete || false
       });
 
     } catch (error) {
       console.error('Error fetching leave balance:', error);
-
-      // Set default values if API fails
       setLeaveBalance({
-        available: 12,
-        total_accrued: 12,
+        available: 0,
+        total_accrued: 0,
         used: 0,
         pending: 0,
         comp_off_balance: 0,
         total_comp_off_earned: 0,
         total_comp_off_used: 0,
-        is_eligible: false
+        is_eligible: false,
+        months_completed: 0,
+        is_probation_complete: false
       });
-
-      showNotification('Using default leave balance', 'info');
+      showNotification('Failed to load leave balance', 'info');
     }
   };
 
   const fetchCompOffHistory = async () => {
     try {
+      // This endpoint might be admin-only, so wrap in try-catch
       const response = await axios.get(`${API_ENDPOINTS.ATTENDANCE}/comp-off/${user.employeeId}/history`);
       setCompOffHistory(response.data.earnings || []);
 
-      // Update stats with comp-off count
       const earned = response.data.earnings?.filter(e => !e.is_used).length || 0;
       setStats(prev => ({
         ...prev,
         compOffEarned: earned
       }));
     } catch (error) {
-      console.error('Error fetching comp-off history:', error);
+      // Silently fail for comp-off history - it's admin-only
+      console.log('Comp-off history not available for employees');
+      setCompOffHistory([]);
     }
   };
 
@@ -324,9 +330,12 @@ const EmployeeDashboard = () => {
   const fetchTodayAttendance = async () => {
     try {
       const today = new Date().toISOString().split('T')[0];
-      const response = await axios.get(
-        `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${today}&end=${today}&employee_id=${user.employeeId}`
-      );
+
+      // ✅ FIX: Use employee-specific endpoint
+      const url = `${API_ENDPOINTS.ATTENDANCE_EMPLOYEE_REPORT(user.employeeId, today, today)}`;
+      console.log('📡 Today attendance URL:', url);
+
+      const response = await axios.get(url);
 
       if (response.data.attendance && response.data.attendance.length > 0) {
         setTodayAttendance(response.data.attendance[0]);
@@ -336,139 +345,115 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // In Attendance.jsx - Fix the handleClockOut function
-const handleClockOut = async () => {
-    setLoading(true);
-    try {
-        const sessionToUse = activeSession || loadSessionFromStorage();
-        
-        if (!sessionToUse) {
-            setMessage({ type: 'warning', text: 'No active session found. Please clock in first.' });
-            setLoading(false);
-            return;
-        }
-
-        console.log('🔍 Clock-out request details:', {
-            employee_id: user.employeeId,
-            session_id: sessionToUse.session_id,
-            hasLocation: !!location,
-            latitude: location?.latitude,
-            longitude: location?.longitude
-        });
-
-        const requestData = {
-            employee_id: user.employeeId,
-            session_id: sessionToUse.session_id,
-            latitude: location?.latitude,
-            longitude: location?.longitude,
-            accuracy: location?.accuracy
-        };
-
-        const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_OUT, requestData);
-
-        setMessage({ type: 'success', text: response.data.message });
-        setAttendance(prev => ({
-            ...prev,
-            clock_out: response.data.clock_out,
-            total_hours: response.data.total_hours,
-            total_minutes: response.data.total_minutes,
-            total_hours_display: response.data.total_hours_display,
-            status: response.data.status
-        }));
-        setActiveSession(null);
-        clearSessionFromStorage();
-        setHasClockedOutToday(true);
-
-        await fetchTodayAttendance();
-        await fetchAttendanceHistory();
-    } catch (error) {
-        console.error('❌ Clock-out error:', error);
-        console.error('Error response:', error.response?.data);
-        
-        if (error.response?.status === 400) {
-            if (error.response?.data?.message === 'No active clock-in session found') {
-                setActiveSession(null);
-                clearSessionFromStorage();
-                setMessage({ type: 'warning', text: 'Session expired. Please clock in again.' });
-            } else {
-                setMessage({ type: 'danger', text: error.response?.data?.message || 'Failed to clock out' });
-            }
-        } else if (error.response?.data?.error_type === 'NO_ACTIVE_SESSION') {
-            setActiveSession(null);
-            clearSessionFromStorage();
-            setMessage({ type: 'warning', text: 'Session expired. Please clock in again.' });
-        } else {
-            setMessage({ type: 'danger', text: error.response?.data?.message || error.message });
-        }
-    } finally {
-        setLoading(false);
-    }
-};
 
   const fetchAttendanceHistory = async () => {
     try {
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 30); // Last 30 days
+      const today = new Date();
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth(); // 0-11
+
+      // Get first day of current month
+      const startDate = new Date(currentYear, currentMonth, 1);
+      // Get last day of current month
+      const endDate = new Date(currentYear, currentMonth + 1, 0);
 
       const startDateStr = startDate.toISOString().split('T')[0];
       const endDateStr = endDate.toISOString().split('T')[0];
 
-      const response = await axios.get(
-        `${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${startDateStr}&end=${endDateStr}&employee_id=${user.employeeId}`
-      );
+      console.log('📅 Fetching attendance for current month:', {
+        start: startDateStr,
+        end: endDateStr,
+        month: currentMonth + 1,
+        year: currentYear
+      });
+
+      // ✅ FIX: Use employee-specific endpoint instead of admin report
+      const url = `${API_ENDPOINTS.ATTENDANCE_EMPLOYEE_REPORT(user.employeeId, startDateStr, endDateStr)}`;
+      console.log('📡 API URL:', url);
+
+      const response = await axios.get(url);
+      console.log('📊 API Response:', response.data);
 
       const attendance = response.data.attendance || [];
+      console.log('📊 Attendance records for current month:', attendance.length);
 
-      // Generate complete calendar for the last 30 days
-      const completeHistory = generateLast30DaysAttendance(attendance, startDate, endDate);
-
-      setAttendanceHistory(completeHistory);
-
-      // Calculate attendance stats
-      let present = 0;
-      let absent = 0;
+      // Calculate present days for current month only
+      let presentDays = 0;
       let halfDays = 0;
       let weeklyOff = 0;
-      let lateDays = 0;
-      let totalLateMinutes = 0;
-      let compOffEarned = 0;
+      let absent = 0;
+      let totalWorkingHours = 0;
 
-      completeHistory.forEach(record => {
-        if (record.isWeeklyOff) {
+      // Get all dates in current month
+      const daysInMonth = endDate.getDate();
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const date = new Date(currentYear, currentMonth, day);
+        const dayOfWeek = date.getDay();
+        const isWeeklyOff = dayOfWeek === 0 || dayOfWeek === 6;
+
+        // Find attendance record for this date
+        const record = attendance.find(r => r.attendance_date === dateStr);
+
+        if (isWeeklyOff) {
           weeklyOff++;
-        } else if (record.status === 'present' || record.status === 'working') {
-          present++;
-          if (parseFloat(record.late_minutes) > 0) {
-            lateDays++;
-            totalLateMinutes += parseFloat(record.late_minutes);
+        } else if (record) {
+          // Check if present (status 'present' or 'working' or clock_in exists)
+          if (record.status === 'present' || record.status === 'working' || record.clock_in) {
+            presentDays++;
+            if (record.total_hours) {
+              totalWorkingHours += parseFloat(record.total_hours);
+            }
+          } else if (record.status === 'half_day') {
+            halfDays++;
+            presentDays++; // Half day is also counted as present
+            if (record.total_hours) {
+              totalWorkingHours += parseFloat(record.total_hours);
+            }
+          } else if (record.status === 'absent') {
+            absent++;
           }
-          if (record.comp_off_awarded) {
-            compOffEarned++;
-          }
-        } else if (record.status === 'half_day') {
-          halfDays++;
-          if (parseFloat(record.late_minutes) > 0) {
-            lateDays++;
-            totalLateMinutes += parseFloat(record.late_minutes);
-          }
-        } else if (record.status === 'absent') {
+        } else {
+          // No record means absent
           absent++;
         }
+      }
+
+      const totalWorkingDays = daysInMonth - weeklyOff;
+
+      console.log('📊 Monthly Stats:', {
+        presentDays: presentDays,
+        halfDays: halfDays,
+        absentDays: absent,
+        weeklyOff: weeklyOff,
+        totalWorkingDays: totalWorkingDays,
+        totalWorkingHours: Math.round(totalWorkingHours * 10) / 10
       });
 
       setStats(prev => ({
         ...prev,
-        presentDays: present,
+        presentDays: presentDays,
         absentDays: absent,
         halfDays: halfDays,
         weeklyOffDays: weeklyOff,
-        lateDays: lateDays,
-        totalLateMinutes: totalLateMinutes,
-        compOffEarned: compOffEarned
+        totalWorkingHours: Math.round(totalWorkingHours * 10) / 10,
+        totalWorkingDays: totalWorkingDays
       }));
+
     } catch (error) {
-      console.error('Error fetching attendance history:', error);
+      console.error('❌ Error fetching attendance history:', error);
+      console.error('Error details:', error.response?.data);
+
+      setStats(prev => ({
+        ...prev,
+        presentDays: 0,
+        absentDays: 0,
+        halfDays: 0,
+        weeklyOffDays: 0,
+        totalWorkingHours: 0,
+        totalWorkingDays: 0
+      }));
     }
   };
 
@@ -883,9 +868,15 @@ const handleClockOut = async () => {
             <Card.Body className="p-2 p-md-3">
               <div className="d-flex justify-content-between align-items-start">
                 <div className="overflow-hidden">
-                  <p className="text-muted small mb-1 text-truncate">Leave Balance</p>
-                  <h4 className="mb-0 fw-bold text-primary">{leaveBalance.available}</h4>
-                  <small className="text-muted text-truncate d-block">Available days</small>
+                  <p className="text-muted small mb-1 text-truncate">
+                    {leaveBalance.is_probation_complete ? 'Leave Balance' : 'Accrued Leaves'}
+                  </p>
+                  <h4 className={`mb-0 fw-bold ${leaveBalance.is_probation_complete ? 'text-primary' : 'text-info'}`}>
+                    {leaveBalance.is_probation_complete ? leaveBalance.available : leaveBalance.total_accrued}
+                  </h4>
+                  <small className="text-muted text-truncate d-block">
+                    {leaveBalance.is_probation_complete ? 'Available days' : 'Earned (usable after probation)'}
+                  </small>
                 </div>
                 <div className="bg-primary bg-opacity-10 p-2 rounded-circle flex-shrink-0">
                   <FaUmbrellaBeach className="text-primary" size={20} />
@@ -901,13 +892,15 @@ const handleClockOut = async () => {
               <div className="d-flex justify-content-between align-items-start">
                 <div className="overflow-hidden">
                   <p className="text-muted small mb-1 text-truncate">Present Days</p>
-                  <h4 className="mb-0 fw-bold text-success">{stats.presentDays}</h4>
-                  <small className="text-muted text-truncate d-block">Last 30 days</small>
+                  <h4 className="mb-0 fw-bold text-success">{stats.presentDays || 0}</h4>
+                  <small className="text-muted text-truncate d-block">This month</small>
                 </div>
                 <div className="bg-success bg-opacity-10 p-2 rounded-circle flex-shrink-0">
                   <FaCheckCircle className="text-success" size={20} />
                 </div>
               </div>
+              {/* Optional: Show loading indicator while fetching */}
+              {loading && <Spinner size="sm" animation="border" className="mt-2" />}
             </Card.Body>
           </Card>
         </Col>

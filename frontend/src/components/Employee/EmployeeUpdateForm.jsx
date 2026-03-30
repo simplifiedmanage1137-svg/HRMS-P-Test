@@ -12,7 +12,7 @@ const EmployeeUpdateForm = () => {
   const { requestId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  
+
   const [formData, setFormData] = useState({});
   const [requestDetails, setRequestDetails] = useState(null);
   const [existingDocuments, setExistingDocuments] = useState({});
@@ -22,56 +22,59 @@ const EmployeeUpdateForm = () => {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('info'); // 'info' or 'documents'
 
+
+const fieldGroups = {
+  personal: [
+    { name: 'first_name', label: 'First Name', type: 'text', required: true },
+    { name: 'middle_name', label: 'Middle Name', type: 'text' },
+    { name: 'last_name', label: 'Last Name', type: 'text', required: true },
+    { name: 'dob', label: 'Date of Birth', type: 'date' },
+    { name: 'blood_group', label: 'Blood Group', type: 'select', options: ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'] }
+  ],
+  contact: [
+    { name: 'email', label: 'Email', type: 'email', required: true },
+    { name: 'phone', label: 'Phone', type: 'tel' }
+  ],
+  address: [
+    { name: 'address', label: 'Address', type: 'textarea' },
+    { name: 'city', label: 'City', type: 'text' },
+    { name: 'state', label: 'State', type: 'text' },
+    { name: 'pincode', label: 'Pincode', type: 'text' }
+  ],
+  bank: [
+    { name: 'bank_account_name', label: 'Account Holder Name', type: 'text' },
+    { name: 'account_number', label: 'Account Number', type: 'text' },
+    { name: 'ifsc_code', label: 'IFSC Code', type: 'text' },
+    { name: 'branch_name', label: 'Branch Name', type: 'text' },
+    { name: 'pan_number', label: 'PAN Number', type: 'text' },
+    { name: 'aadhar_number', label: 'Aadhar Card Number', type: 'text', placeholder: '12-digit Aadhar number' }  // ✅ Added aadhar_number
+  ],
+  employment: [
+    { name: 'designation', label: 'Designation', type: 'text' },
+    { name: 'department', label: 'Department', type: 'text' },
+    { name: 'employment_type', label: 'Employment Type', type: 'select', options: ['Full Time', 'Part Time', 'Contract', 'Intern', 'Probation'] },
+    { name: 'shift_timing', label: 'Shift Timing', type: 'text', placeholder: 'e.g., 9:00 AM - 6:00 PM' },
+    { name: 'reporting_manager', label: 'Reporting Manager', type: 'text' }
+  ],
+  emergency: [
+    { name: 'emergency_contact', label: 'Emergency Contact Number', type: 'tel' }
+  ],
+  salary: [
+    { name: 'gross_salary', label: 'Gross Salary', type: 'number' },
+    { name: 'in_hand_salary', label: 'In-hand Salary', type: 'number' }
+  ]
+};
+  // Also update the fieldIcons object
   const fieldIcons = {
     personal: { icon: '👤', label: 'Personal Information' },
     contact: { icon: '📞', label: 'Contact Details' },
     address: { icon: '🏠', label: 'Address' },
     bank: { icon: '🏦', label: 'Bank Details' },
+    aadhar: { icon: '🆔', label: 'Aadhar Card' },  // ✅ NEW
     employment: { icon: '💼', label: 'Employment Details' },
     emergency: { icon: '🚑', label: 'Emergency Contact' },
     documents: { icon: '📄', label: 'Documents' },
     salary: { icon: '💰', label: 'Salary Information' }
-  };
-
-  const fieldGroups = {
-    personal: [
-      { name: 'first_name', label: 'First Name', type: 'text', required: true },
-      { name: 'middle_name', label: 'Middle Name', type: 'text' },
-      { name: 'last_name', label: 'Last Name', type: 'text', required: true },
-      { name: 'dob', label: 'Date of Birth', type: 'date' },
-      { name: 'blood_group', label: 'Blood Group', type: 'select', options: ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'] }
-    ],
-    contact: [
-      { name: 'email', label: 'Email', type: 'email', required: true },
-      { name: 'phone', label: 'Phone', type: 'tel' }
-    ],
-    address: [
-      { name: 'address', label: 'Address', type: 'textarea' },
-      { name: 'city', label: 'City', type: 'text' },
-      { name: 'state', label: 'State', type: 'text' },
-      { name: 'pincode', label: 'Pincode', type: 'text' }
-    ],
-    bank: [
-      { name: 'bank_account_name', label: 'Account Holder Name', type: 'text' },
-      { name: 'account_number', label: 'Account Number', type: 'text' },
-      { name: 'ifsc_code', label: 'IFSC Code', type: 'text' },
-      { name: 'branch_name', label: 'Branch Name', type: 'text' },
-      { name: 'pan_number', label: 'PAN Number', type: 'text' }
-    ],
-    employment: [
-      { name: 'designation', label: 'Designation', type: 'text' },
-      { name: 'department', label: 'Department', type: 'text' },
-      { name: 'employment_type', label: 'Employment Type', type: 'select', options: ['Full Time', 'Part Time', 'Contract', 'Intern', 'Probation'] },
-      { name: 'shift_timing', label: 'Shift Timing', type: 'text', placeholder: 'e.g., 9:00 AM - 6:00 PM' },
-      { name: 'reporting_manager', label: 'Reporting Manager', type: 'text' }
-    ],
-    emergency: [
-      { name: 'emergency_contact', label: 'Emergency Contact Number', type: 'tel' }
-    ],
-    salary: [
-      { name: 'gross_salary', label: 'Gross Salary', type: 'number' },
-      { name: 'in_hand_salary', label: 'In-hand Salary', type: 'number' }
-    ]
   };
 
   useEffect(() => {
@@ -123,7 +126,7 @@ const EmployeeUpdateForm = () => {
     setSubmitting(true);
     setMessage('');
     setError('');
-    
+
     try {
       const updatedData = {};
       if (requestDetails?.requested_fields) {
@@ -143,7 +146,7 @@ const EmployeeUpdateForm = () => {
         requestId,
         updatedData
       });
-      
+
       setMessage('Update submitted for admin approval!');
       setTimeout(() => navigate('/employee/update-requests'), 2000);
     } catch (error) {
@@ -182,8 +185,8 @@ const EmployeeUpdateForm = () => {
             <h5 className="mb-0 small">Update Your Information</h5>
             <small className="d-block">Request #{requestId}</small>
           </div>
-          <Button 
-            variant="light" 
+          <Button
+            variant="light"
             size="sm"
             onClick={() => navigate('/employee/update-requests')}
             className="d-inline-flex align-items-center ms-0 ms-md-auto"
@@ -203,7 +206,7 @@ const EmployeeUpdateForm = () => {
               {error}
             </Alert>
           )}
-          
+
           {/* Tab Navigation */}
           {(hasInfoFields || !isDocumentRequest) && isDocumentRequest && (
             <div className="d-flex border-bottom mb-4">
@@ -297,17 +300,17 @@ const EmployeeUpdateForm = () => {
               })}
 
               <div className="d-flex flex-column flex-sm-row justify-content-end gap-2 mt-4">
-                <Button 
-                  variant="secondary" 
+                <Button
+                  variant="secondary"
                   size="sm"
                   onClick={() => navigate('/employee/update-requests')}
                   className="order-2 order-sm-1"
                 >
                   Cancel
                 </Button>
-                <Button 
-                  type="submit" 
-                  variant="primary" 
+                <Button
+                  type="submit"
+                  variant="primary"
                   size="sm"
                   disabled={submitting}
                   className="d-inline-flex align-items-center order-1 order-sm-2"

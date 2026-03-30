@@ -1,13 +1,13 @@
 // src/components/Employee/ApplyLeave.jsx
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, Form, Button, Row, Col, Alert, 
-  Spinner, Badge, ProgressBar 
+import {
+  Card, Form, Button, Row, Col, Alert,
+  Spinner, Badge, ProgressBar
 } from 'react-bootstrap';
-import { 
-  FaCalendarAlt, 
-  FaPaperPlane, 
-  FaTimes, 
+import {
+  FaCalendarAlt,
+  FaPaperPlane,
+  FaTimes,
   FaInfoCircle,
   FaUmbrellaBeach,
   FaClock,
@@ -57,23 +57,28 @@ const ApplyLeave = () => {
   });
   const [calculatedDays, setCalculatedDays] = useState(1);
   const [errors, setErrors] = useState({});
-  
-  // Leave types based on eligibility and comp-off balance
+
   const getAvailableLeaveTypes = () => {
     const types = [];
-    
+
     // Always show Comp-Off if balance > 0
     if (leaveBalance.comp_off_balance > 0) {
-      types.push({ 
-        value: 'Comp-Off', 
-        label: `Comp-Off (${leaveBalance.comp_off_balance} days available)`, 
+      types.push({
+        value: 'Comp-Off',
+        label: `Comp-Off (${leaveBalance.comp_off_balance} days available)`,
         icon: '🎉',
         color: 'purple'
       });
     }
-    
-    if (leaveBalance.is_eligible) {
-      // After probation - all leave types available
+
+    // Always show Unpaid Leave
+    types.push({ value: 'Unpaid', label: 'Unpaid Leave', icon: '💰' });
+
+    // Only show paid leaves if probation is complete
+    // ✅ FIX: Use is_probation_complete instead of is_eligible
+    const isProbationComplete = leaveBalance.is_probation_complete || leaveBalance.is_eligible;
+
+    if (isProbationComplete) {
       types.push(
         { value: 'Annual', label: 'Annual Leave', icon: '🌴' },
         { value: 'Sick', label: 'Sick Leave', icon: '🤒' },
@@ -83,10 +88,7 @@ const ApplyLeave = () => {
         { value: 'Bereavement', label: 'Bereavement Leave', icon: '💐' }
       );
     }
-    
-    // Always add Unpaid Leave
-    types.push({ value: 'Unpaid', label: 'Unpaid Leave', icon: '💰' });
-    
+
     return types;
   };
 
@@ -97,9 +99,22 @@ const ApplyLeave = () => {
 
   useEffect(() => {
     if (user?.employeeId) {
-      fetchEmployeeDetails();
-      fetchLeaveBalance();
-      fetchRecentLeaves();
+      // Add timeout to prevent infinite loading
+      const timeoutId = setTimeout(() => {
+        if (loading) {
+          console.log('Loading timeout - forcing stop');
+          setLoading(false);
+          showNotification('Loading took too long. Please refresh.', 'warning');
+        }
+      }, 10000);
+
+      Promise.all([
+        fetchEmployeeDetails(),
+        fetchLeaveBalance(),
+        fetchRecentLeaves()
+      ]).finally(() => {
+        clearTimeout(timeoutId);
+      });
     }
   }, [user]);
 
@@ -109,7 +124,7 @@ const ApplyLeave = () => {
 
   useEffect(() => {
     // Reset leave type based on eligibility when balance updates
-    if (!leaveBalance.is_eligible) {
+    if (!leaveBalance.is_eligible && !leaveBalance.is_probation_complete) {
       if (leaveBalance.comp_off_balance > 0) {
         setFormData(prev => ({
           ...prev,
@@ -121,39 +136,39 @@ const ApplyLeave = () => {
           leave_type: 'Unpaid'
         }));
       }
-    } else {
+    } else if (leaveBalance.is_eligible || leaveBalance.is_probation_complete) {
       // If eligible, default to Annual leave
       setFormData(prev => ({
         ...prev,
         leave_type: 'Annual'
       }));
     }
-  }, [leaveBalance.is_eligible, leaveBalance.comp_off_balance]);
+  }, [leaveBalance.is_eligible, leaveBalance.is_probation_complete, leaveBalance.comp_off_balance]);
 
   const fetchEmployeeDetails = async () => {
     try {
       const response = await axios.get(API_ENDPOINTS.EMPLOYEE_PROFILE(user.employeeId));
-      
+
       // Calculate months completed from joining date
       const joiningDate = new Date(response.data.joining_date);
       const today = new Date();
-      let months = (today.getFullYear() - joiningDate.getFullYear()) * 12 + 
-                   (today.getMonth() - joiningDate.getMonth());
-      
+      let months = (today.getFullYear() - joiningDate.getFullYear()) * 12 +
+        (today.getMonth() - joiningDate.getMonth());
+
       // Adjust for day of month
       if (today.getDate() < joiningDate.getDate()) {
         months -= 1;
       }
-      
+
       // Ensure not negative
       months = Math.max(0, months);
-      
+
       setEmployeeDetails({
         joining_date: response.data.joining_date,
         reporting_manager: response.data.reporting_manager || '',
         months_completed: months
       });
-      
+
       if (response.data.reporting_manager) {
         setFormData(prev => ({
           ...prev,
@@ -163,32 +178,67 @@ const ApplyLeave = () => {
     } catch (error) {
       console.error('Error fetching employee details:', error);
       showNotification('Failed to load employee details', 'danger');
+      // Set default values on error
+      setEmployeeDetails({
+        joining_date: '',
+        reporting_manager: '',
+        months_completed: 0
+      });
     }
   };
 
   const fetchLeaveBalance = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(API_ENDPOINTS.LEAVE_BALANCE(user.employeeId));
-      
-      console.log('🔍 LEAVE BALANCE RESPONSE:', response.data);
-      
+      console.log('📊 Fetching leave balance for employee:', user?.employeeId);
+
+      const response = await axios.get(API_ENDPOINTS.LEAVE_BALANCE(user?.employeeId));
+      console.log('📊 Leave balance response:', response.data);
+
+      // ✅ FIX: Use correct field names from API response with proper fallbacks
+      const isProbationComplete = response.data.is_probation_complete === true || response.data.is_eligible === true;
+
       setLeaveBalance({
-        available: response.data.available || 0,
-        total_accrued: response.data.total_accrued || 0,
-        used: response.data.used || 0,
-        pending: response.data.pending || 0,
-        comp_off_balance: response.data.comp_off_balance || 0,
+        available: parseFloat(response.data.available) || 0,
+        total_accrued: parseFloat(response.data.total_accrued) || 0,
+        used: parseFloat(response.data.used) || 0,
+        pending: parseFloat(response.data.pending) || 0,
+        comp_off_balance: parseFloat(response.data.comp_off_balance) || 0,
+        total_comp_off_earned: parseFloat(response.data.total_comp_off_earned) || 0,
+        total_comp_off_used: parseFloat(response.data.total_comp_off_used) || 0,
+        completed_months_in_year: response.data.accrual_info?.months_this_year || 0,
+        message: response.data.message || '',
+        is_eligible: isProbationComplete,
         months_completed: response.data.months_completed || 0,
-        is_eligible: response.data.is_eligible || false,
+        is_probation_complete: isProbationComplete,
         eligible_from_date: response.data.eligible_from_date || ''
       });
-      
+
+      console.log('✅ Leave balance set successfully');
       setLoading(false);
+
     } catch (error) {
-      console.error('Error fetching leave balance:', error);
-      showNotification(error.response?.data?.message || 'Failed to load leave balance', 'danger');
+      console.error('❌ Error fetching leave balance:', error);
+      console.error('Error details:', error.response?.data);
+
+      // Set default values on error
+      setLeaveBalance({
+        available: 0,
+        total_accrued: 0,
+        used: 0,
+        pending: 0,
+        comp_off_balance: 0,
+        total_comp_off_earned: 0,
+        total_comp_off_used: 0,
+        completed_months_in_year: 0,
+        message: 'Failed to load leave balance',
+        is_eligible: false,
+        months_completed: 0,
+        is_probation_complete: false,
+        eligible_from_date: ''
+      });
       setLoading(false);
+      showNotification(error.response?.data?.message || 'Failed to load leave balance', 'danger');
     }
   };
 
@@ -219,7 +269,7 @@ const ApplyLeave = () => {
 
     const start = new Date(formData.start_date);
     const end = new Date(formData.end_date);
-    
+
     if (start > end) {
       setErrors(prev => ({
         ...prev,
@@ -231,7 +281,7 @@ const ApplyLeave = () => {
 
     const diffTime = Math.abs(end - start);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    
+
     setCalculatedDays(diffDays);
     setErrors(prev => ({ ...prev, end_date: '' }));
   };
@@ -305,61 +355,61 @@ const ApplyLeave = () => {
     e.preventDefault();
 
     if (!validateForm()) {
-        showNotification('Please fix the errors in the form', 'warning');
-        return;
+      showNotification('Please fix the errors in the form', 'warning');
+      return;
     }
 
     setSubmitting(true);
 
     try {
-        const leaveData = {
-            ...formData,
-            employee_id: user.employeeId,  // This is already in the body
-            days_count: calculatedDays,
-            applied_date: new Date().toISOString().split('T')[0]
-        };
+      const leaveData = {
+        ...formData,
+        employee_id: user.employeeId,  // This is already in the body
+        days_count: calculatedDays,
+        applied_date: new Date().toISOString().split('T')[0]
+      };
 
-        // REMOVE the custom headers - just use default axios instance
-        const response = await axios.post(API_ENDPOINTS.LEAVE_APPLY, leaveData);
+      // REMOVE the custom headers - just use default axios instance
+      const response = await axios.post(API_ENDPOINTS.LEAVE_APPLY, leaveData);
 
-        if (response.data.success) {
-            showNotification(
-                formData.leave_type === 'Comp-Off' 
-                    ? 'Comp-Off request submitted successfully!' 
-                    : 'Leave request submitted successfully!', 
-                'success'
-            );
-            
-            // Reset form
-            setFormData({
-                leave_type: leaveBalance.is_eligible ? 'Annual' : (leaveBalance.comp_off_balance > 0 ? 'Comp-Off' : 'Unpaid'),
-                leave_duration: 'Full Day',
-                half_day_type: '',
-                start_date: '',
-                end_date: '',
-                reason: '',
-                reporting_manager: employeeDetails.reporting_manager
-            });
-            
-            // Refresh data
-            await fetchLeaveBalance();
-            await fetchRecentLeaves();
-            
-            // Navigate back after short delay
-            setTimeout(() => {
-                navigate('/employee/dashboard');
-            }, 2000);
-        }
-    } catch (error) {
-        console.error('Error submitting leave:', error);
+      if (response.data.success) {
         showNotification(
-            error.response?.data?.message || 'Failed to submit leave request',
-            'danger'
+          formData.leave_type === 'Comp-Off'
+            ? 'Comp-Off request submitted successfully!'
+            : 'Leave request submitted successfully!',
+          'success'
         );
+
+        // Reset form
+        setFormData({
+          leave_type: leaveBalance.is_eligible ? 'Annual' : (leaveBalance.comp_off_balance > 0 ? 'Comp-Off' : 'Unpaid'),
+          leave_duration: 'Full Day',
+          half_day_type: '',
+          start_date: '',
+          end_date: '',
+          reason: '',
+          reporting_manager: employeeDetails.reporting_manager
+        });
+
+        // Refresh data
+        await fetchLeaveBalance();
+        await fetchRecentLeaves();
+
+        // Navigate back after short delay
+        setTimeout(() => {
+          navigate('/employee/dashboard');
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('Error submitting leave:', error);
+      showNotification(
+        error.response?.data?.message || 'Failed to submit leave request',
+        'danger'
+      );
     } finally {
-        setSubmitting(false);
+      setSubmitting(false);
     }
-};
+  };
 
   const handleCancel = () => {
     navigate('/employee/dashboard');
@@ -419,15 +469,15 @@ const ApplyLeave = () => {
             Apply for Leave
           </h5>
           <p className="text-muted mb-0 small">
-            {leaveBalance.is_eligible 
-              ? 'You can apply for any type of leave' 
+            {leaveBalance.is_eligible
+              ? 'You can apply for any type of leave'
               : leaveBalance.comp_off_balance > 0
                 ? 'During probation, Comp-Off and Unpaid Leave are available'
                 : 'During probation, only Unpaid Leave is available'}
           </p>
         </div>
-        <Button 
-          variant="outline-secondary" 
+        <Button
+          variant="outline-secondary"
           size="sm"
           onClick={handleCancel}
           className="d-inline-flex align-items-center ms-0 ms-md-auto"
@@ -446,14 +496,14 @@ const ApplyLeave = () => {
             </Card.Header>
             <Card.Body className="p-2 p-md-3">
               {/* Probation Status Alert */}
-              {!leaveBalance.is_eligible && (
+              {!leaveBalance.is_probation_complete && (
                 <Alert variant="info" className="mb-4 py-2">
                   <div className="d-flex align-items-start">
                     <FaInfoCircle className="me-3 text-primary mt-1 flex-shrink-0" size={20} />
                     <div>
                       <h6 className="alert-heading mb-1 small">Probation Period</h6>
                       <p className="mb-0 small">
-                        You are currently in your probation period. 
+                        You are currently in your probation period.
                         {leaveBalance.comp_off_balance > 0 && (
                           <> You have <strong>{leaveBalance.comp_off_balance} Comp-Off days</strong> available from working on holidays.</>
                         )}
@@ -487,8 +537,8 @@ const ApplyLeave = () => {
                     <span className="text-muted">Progress to eligibility:</span>
                     <span className="fw-semibold">{leaveBalance.months_completed} / 6 months</span>
                   </div>
-                  <ProgressBar 
-                    now={calculateProgressToEligibility()} 
+                  <ProgressBar
+                    now={calculateProgressToEligibility()}
                     variant="info"
                     style={{ height: '8px' }}
                   />
@@ -613,7 +663,7 @@ const ApplyLeave = () => {
                   <Col sm={6}>
                     <Form.Group>
                       <Form.Label className="small fw-semibold text-muted">
-                        {formData.leave_duration === 'Half Day' ? 'Date' : 'End Date'} 
+                        {formData.leave_duration === 'Half Day' ? 'Date' : 'End Date'}
                         {formData.leave_duration === 'Full Day' && <span className="text-danger">*</span>}
                       </Form.Label>
                       <Form.Control
@@ -692,7 +742,7 @@ const ApplyLeave = () => {
                     variant="primary"
                     size="sm"
                     disabled={submitting || (
-                      formData.leave_type === 'Comp-Off' 
+                      formData.leave_type === 'Comp-Off'
                         ? calculatedDays > leaveBalance.comp_off_balance
                         : (leaveBalance.is_eligible && formData.leave_type !== 'Unpaid' && calculatedDays > leaveBalance.available)
                     )}
@@ -736,8 +786,9 @@ const ApplyLeave = () => {
             </Card.Header>
             <Card.Body className="p-2 p-md-3">
               {/* Status Badge */}
-              <div className={`text-center mb-3 p-2 rounded ${leaveBalance.is_eligible ? 'bg-success bg-opacity-10' : 'bg-info bg-opacity-10'}`}>
-                {leaveBalance.is_eligible ? (
+              {/* Status Badge */}
+              <div className={`text-center mb-3 p-2 rounded ${leaveBalance.is_probation_complete ? 'bg-success bg-opacity-10' : 'bg-info bg-opacity-10'}`}>
+                {leaveBalance.is_probation_complete ? (
                   <>
                     <FaCheckCircle className="text-success mb-2" size={24} />
                     <p className="small text-success fw-semibold mb-0">Probation Completed</p>
@@ -748,7 +799,7 @@ const ApplyLeave = () => {
                     <FaHourglassHalf className="text-info mb-2" size={24} />
                     <p className="small text-info fw-semibold mb-0">Probation Period</p>
                     <p className="small text-muted mt-1">
-                      {leaveBalance.comp_off_balance > 0 
+                      {leaveBalance.comp_off_balance > 0
                         ? 'Comp-Off & Unpaid Leave available'
                         : 'Only Unpaid Leave available'}
                     </p>
@@ -770,14 +821,22 @@ const ApplyLeave = () => {
 
               {/* Regular Leave Balance */}
               <div className="text-center mb-3">
-                <h3 className={`display-6 fw-bold ${leaveBalance.is_eligible ? 'text-primary' : 'text-muted'}`}>
-                  {leaveBalance.available}
+                <h3 className={`display-6 fw-bold ${leaveBalance.is_probation_complete ? 'text-primary' : 'text-muted'}`}>
+                  {leaveBalance.is_probation_complete ? leaveBalance.available : '0'}
                 </h3>
-                <p className="text-muted small">Regular Leave Balance</p>
-                {!leaveBalance.is_eligible && (
-                  <Badge bg="secondary" className="mt-1">
-                    Accruing but not usable yet
-                  </Badge>
+                <p className="text-muted small">
+                  {leaveBalance.is_probation_complete ? 'Available Leaves' : 'Leaves Available (During Probation)'}
+                </p>
+                {!leaveBalance.is_probation_complete && (
+                  <>
+                    <Badge bg="info" className="mt-1">
+                      Accrued: {leaveBalance.total_accrued} days (usable after probation)
+                    </Badge>
+                    <div className="mt-2 small text-muted">
+                      <FaInfoCircle className="me-1" size={10} />
+                      You have earned {leaveBalance.total_accrued} leaves, but can only use them after completing 6 months.
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -799,9 +858,9 @@ const ApplyLeave = () => {
                 {/* Progress Bar - Only show if eligible or for display */}
                 {leaveBalance.total_accrued > 0 && (
                   <>
-                    <ProgressBar 
-                      now={(leaveBalance.used / leaveBalance.total_accrued) * 100} 
-                      variant={getLeaveBalanceColor()} 
+                    <ProgressBar
+                      now={(leaveBalance.used / leaveBalance.total_accrued) * 100}
+                      variant={getLeaveBalanceColor()}
                       style={{ height: '6px' }}
                     />
                     <small className="text-muted d-block text-center mt-1">
@@ -876,8 +935,8 @@ const ApplyLeave = () => {
                       <div className="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2">
                         <div>
                           <span className="small fw-semibold d-block">
-                            {leave.leave_type === 'Comp-Off' ? '🎉 ' : 
-                             leave.leave_type === 'Unpaid' ? '💰 ' : '🌴 '}
+                            {leave.leave_type === 'Comp-Off' ? '🎉 ' :
+                              leave.leave_type === 'Unpaid' ? '💰 ' : '🌴 '}
                             {leave.leave_type}
                           </span>
                           <small className="text-muted d-block">
@@ -885,10 +944,10 @@ const ApplyLeave = () => {
                             {leave.start_date !== leave.end_date && ` - ${formatDate(leave.end_date)}`}
                           </small>
                         </div>
-                        <Badge 
+                        <Badge
                           bg={
                             leave.status === 'approved' ? 'success' :
-                            leave.status === 'pending' ? 'warning' : 'danger'
+                              leave.status === 'pending' ? 'warning' : 'danger'
                           }
                           pill
                           className="ms-0 ms-sm-auto"

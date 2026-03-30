@@ -118,7 +118,6 @@ const Attendance = () => {
     if (!datetime) return '--:--';
     try {
       if (typeof datetime === 'string') {
-        // If it's in "YYYY-MM-DD HH:MM:SS" format
         if (datetime.includes(' ') && !datetime.includes('T')) {
           const timePart = datetime.split(' ')[1];
           const [hour, minute] = timePart.split(':');
@@ -127,7 +126,6 @@ const Attendance = () => {
           const hour12 = hourNum % 12 || 12;
           return `${hour12}:${minute.padStart(2, '0')} ${ampm}`;
         }
-        // If it's ISO format
         if (datetime.includes('T')) {
           const match = datetime.match(/T(\d{2}):(\d{2}):(\d{2})/);
           if (match) {
@@ -153,11 +151,8 @@ const Attendance = () => {
     let value = datetimeStr.trim();
     if (value === '') return null;
 
-    // Remove timezone markers if present
     value = value.replace(/Z$/, '');
     value = value.replace(/[+-]\d{2}:?\d{2}$/, '');
-
-    // Normalize date separators
     value = value.replace('T', ' ');
 
     const [datePart, timePart] = value.split(' ');
@@ -304,7 +299,6 @@ const Attendance = () => {
       console.log('📊 Today attendance from API:', attendanceData);
 
       if (attendanceData) {
-        // Use IST-stored values for display
         attendanceData.clock_in = attendanceData.clock_in_ist || attendanceData.clock_in;
         attendanceData.clock_out = attendanceData.clock_out_ist || attendanceData.clock_out;
 
@@ -354,19 +348,46 @@ const Attendance = () => {
     try {
       const response = await axios.get(API_ENDPOINTS.ATTENDANCE_MISSED_CLOCKOUTS(user.employeeId));
       const missedRecords = response.data.missed_clockouts || [];
+
+      console.log('📋 Missed clockouts with hours:', missedRecords);
+
       setMissedClockOuts(missedRecords);
 
-      const needRegularization = missedRecords.filter(
-        record => !record.is_regularized && !record.regularization_requested
+      const eligibleRecords = missedRecords.filter(
+        record => record.can_regularize === true
       );
 
-      if (needRegularization.length > 0 && !sessionStorage.getItem('missed_clockout_shown')) {
-        sessionStorage.setItem('missed_clockout_shown', 'true');
+      const pendingRecords = missedRecords.filter(
+        record => record.regularization_requested && record.regularization_status === 'pending'
+      );
+
+      const regularizedRecords = missedRecords.filter(
+        record => record.is_regularized === true
+      );
+
+      console.log('📊 Summary:', {
+        eligible: eligibleRecords.length,
+        pending: pendingRecords.length,
+        regularized: regularizedRecords.length,
+        total: missedRecords.length
+      });
+
+      if (eligibleRecords.length > 0 && !sessionStorage.getItem('eligible_regularization_shown')) {
+        sessionStorage.setItem('eligible_regularization_shown', 'true');
         setMessage({
           type: 'warning',
-          text: `You have ${needRegularization.length} missed clock-out(s) from previous days. Please request regularization to update your attendance.`
+          text: `You have ${eligibleRecords.length} day(s) with completed ${eligibleRecords[0]?.expected_hours || 9}+ hours that need clock-out. Please request regularization.`
+        });
+        setTimeout(() => setMessage({ type: '', text: '' }), 5000);
+      }
+
+      if (pendingRecords.length > 0) {
+        setMessage({
+          type: 'info',
+          text: `You have ${pendingRecords.length} regularization request(s) pending approval.`
         });
       }
+
     } catch (error) {
       console.error('Error fetching missed clock-outs:', error);
     }
@@ -380,6 +401,16 @@ const Attendance = () => {
 
     if (!selectedMissedRecord) {
       setMessage({ type: 'danger', text: 'No record selected' });
+      return;
+    }
+
+    if (!selectedMissedRecord.can_regularize) {
+      setMessage({
+        type: 'danger',
+        text: `Cannot request regularization. You have only completed ${selectedMissedRecord.total_hours_worked} out of ${selectedMissedRecord.expected_hours} required hours.`
+      });
+      setShowRegularizationModal(false);
+      setSelectedMissedRecord(null);
       return;
     }
 
@@ -397,7 +428,7 @@ const Attendance = () => {
         attendance_id: String(selectedMissedRecord.id),
         requested_clock_out_time: localDateTimeStr,
         attendance_date: selectedMissedRecord.attendance_date,
-        reason: regularizationReason || 'Missed clock-out'
+        reason: regularizationReason || 'Missed clock-out after completing full shift'
       };
 
       const url = API_ENDPOINTS.ATTENDANCE_REGULARIZATION_REQUEST(user.employeeId);
@@ -509,26 +540,21 @@ const Attendance = () => {
         let formattedClockIn = null;
         let formattedClockOut = null;
 
-        // IMPORTANT: Use clock_in_ist first, fallback to clock_in
         const clockInValue = existingRecord.clock_in_ist || existingRecord.clock_in;
         const clockOutValue = existingRecord.clock_out_ist || existingRecord.clock_out;
 
-        // If clock in exists and clock out missing on today's record, treat as working
         if (!displayStatus && clockInValue && !clockOutValue && isToday) {
           displayStatus = 'working';
         }
 
-        // Format clock-in in IST
         if (clockInValue) {
           formattedClockIn = formatTimeIST(clockInValue);
         }
 
-        // Format clock-out in IST
         if (clockOutValue) {
           formattedClockOut = formatTimeIST(clockOutValue);
         }
 
-        // Calculate hours using local time
         if (clockInValue && clockOutValue) {
           const clockInTime = parseLocalTime(clockInValue);
           const clockOutTime = parseLocalTime(clockOutValue);
@@ -541,8 +567,6 @@ const Attendance = () => {
 
             totalHoursDisplay = `${hours}h ${minutes}m`;
             totalHours = diffMinutes / 60;
-
-            console.log(`📊 ${dateStr}: ${formattedClockIn} - ${formattedClockOut} = ${totalHoursDisplay}`);
           }
         } else if (clockInValue && !clockOutValue && isToday) {
           const clockInTime = parseLocalTime(clockInValue);
@@ -560,7 +584,6 @@ const Attendance = () => {
           }
         }
 
-        // Determine final status
         let finalStatus = displayStatus;
         if (existingRecord.is_regularized) {
           finalStatus = 'present';
@@ -711,7 +734,6 @@ const Attendance = () => {
       console.log('✅ API Response Status:', response.status);
       console.log('📊 Total records:', response.data.attendance?.length || 0);
 
-      // Debug: Log first record to see what's coming
       if (response.data.attendance && response.data.attendance.length > 0) {
         console.log('🔍 Sample record:', {
           clock_in_ist: response.data.attendance[0].clock_in_ist,
@@ -782,12 +804,9 @@ const Attendance = () => {
   const handleClockIn = async () => {
     setLoading(true);
     try {
-      // REMOVED: Location validation completely
-      // No more checking for location or geofence
-
       const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_IN, {
         employee_id: user.employeeId,
-        latitude: null,  // Send null instead of location
+        latitude: null,
         longitude: null,
         accuracy: null
       });
@@ -819,43 +838,41 @@ const Attendance = () => {
     }
   };
 
-  // Replace handleClockOut function
   const handleClockOut = async () => {
     setLoading(true);
-    await recoverActiveSession();
-    let sessionToUse = activeSession || loadSessionFromStorage();
-
     try {
-      if (!sessionToUse || !sessionToUse.session_id) {
-        const attendanceResponse = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
-        const todayAttendance = attendanceResponse.data.attendance;
+      let sessionId = activeSession?.session_id || loadSessionFromStorage()?.session_id;
 
-        if (todayAttendance && todayAttendance.clock_in && !todayAttendance.clock_out) {
-          const newSession = {
-            session_id: todayAttendance.session_id || `temp-${todayAttendance.id}-${Date.now()}`,
-            clock_in_time: todayAttendance.clock_in
-          };
-          sessionToUse = newSession;
-          setActiveSession(newSession);
-          saveSessionToStorage(newSession);
-        } else {
-          setMessage({ type: 'warning', text: 'No active session found. Please clock in first.' });
-          setLoading(false);
-          return;
+      if (!sessionId) {
+        try {
+          const attendanceResponse = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
+          const todayAttendance = attendanceResponse.data.attendance;
+          if (todayAttendance && todayAttendance.session_id) {
+            sessionId = todayAttendance.session_id;
+          }
+        } catch (error) {
+          console.error('Error fetching today attendance:', error);
         }
       }
 
-      const requestData = {
+      if (!sessionId) {
+        setMessage({ type: 'warning', text: 'No active session found. Please clock in first.' });
+        setLoading(false);
+        return;
+      }
+
+      const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_OUT, {
         employee_id: user.employeeId,
-        session_id: sessionToUse.session_id,
-        latitude: null,  // Send null
+        session_id: sessionId,
+        latitude: null,
         longitude: null,
         accuracy: null
-      };
+      });
 
-      const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_OUT, requestData);
+      console.log('✅ Clock-out response:', response.data);
 
       setMessage({ type: 'success', text: response.data.message });
+
       setAttendance(prev => ({
         ...prev,
         clock_out: response.data.clock_out_ist || response.data.clock_out,
@@ -864,6 +881,7 @@ const Attendance = () => {
         total_hours_display: response.data.total_hours_display,
         status: response.data.status
       }));
+
       setActiveSession(null);
       clearSessionFromStorage();
       setHasClockedOutToday(true);
@@ -914,16 +932,48 @@ const Attendance = () => {
   };
 
   const handleOpenRegularizationModal = (record) => {
+    if (record.has_clock_out) {
+      setMessage({
+        type: 'info',
+        text: `Attendance for ${record.attendance_date} already has a clock-out time. No regularization needed.`
+      });
+      return;
+    }
+
+    if (record.is_regularized) {
+      setMessage({
+        type: 'info',
+        text: `Attendance for ${record.attendance_date} has already been regularized.`
+      });
+      return;
+    }
+
+    if (record.regularization_requested) {
+      setMessage({
+        type: 'warning',
+        text: `You have already requested regularization for ${record.attendance_date}. Please wait for admin approval.`
+      });
+      return;
+    }
+
+    if (!record.can_regularize) {
+      setMessage({
+        type: 'danger',
+        text: `You need to complete ${record.hours_needed} more hours before requesting regularization.`
+      });
+      return;
+    }
+
     setSelectedMissedRecord(record);
+
     const [year, month, day] = record.attendance_date.split('-');
     const defaultDateTime = `${year}-${month}-${day}T18:00`;
+
     setRegularizationTime(defaultDateTime);
     setShowRegularizationModal(true);
   };
 
-// In Attendance.jsx - Update getLocationBadge
-const getLocationBadge = () => {
-    // Show simple badge indicating location is disabled
+  const getLocationBadge = () => {
     return (
       <Badge bg="info" className="px-3 py-2">
         <FaLocationArrow className="me-2" />
@@ -958,7 +1008,6 @@ const getLocationBadge = () => {
         </Button>
       );
     }
-    // REMOVED: geofenceInfo?.isInOffice check
     return (
       <Button variant="success" size="lg" className="w-100 py-3" onClick={handleClockIn} disabled={loading}>
         {loading ? (
@@ -976,13 +1025,58 @@ const getLocationBadge = () => {
     );
   };
 
+  // Session validation and cleanup on mount
   useEffect(() => {
     if (!user?.employeeId) return;
-    const stored = loadSessionFromStorage();
-    if (stored) setActiveSession(stored);
-    fetchTodayAttendance();
-    fetchMissedClockOuts();
-    getCurrentLocation();
+
+    const initializeSession = async () => {
+      const stored = loadSessionFromStorage();
+
+      if (stored && stored.session_id) {
+        try {
+          const { data: session, error } = await supabase
+            .from('attendance_sessions')
+            .select('is_active')
+            .eq('session_id', stored.session_id)
+            .eq('employee_id', user.employeeId)
+            .single();
+
+          if (error || !session || !session.is_active) {
+            console.log('Stored session is invalid, clearing...');
+            setActiveSession(null);
+            clearSessionFromStorage();
+            setHasClockedOutToday(false);
+          } else {
+            setActiveSession(stored);
+          }
+        } catch (error) {
+          console.error('Error validating session:', error);
+        }
+      }
+
+      // Also check today's attendance to determine if we should have active session
+      try {
+        const response = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
+        const todayAttendance = response.data.attendance;
+        
+        // If today has clock_out, ensure no active session
+        if (todayAttendance && todayAttendance.clock_out) {
+          setHasClockedOutToday(true);
+          if (activeSession) {
+            setActiveSession(null);
+            clearSessionFromStorage();
+          }
+        }
+      } catch (error) {
+        console.error('Error checking today attendance:', error);
+      }
+
+      fetchTodayAttendance();
+      fetchMissedClockOuts();
+      getCurrentLocation();
+    };
+
+    initializeSession();
 
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     const handleBeforeUnload = (e) => {
@@ -992,6 +1086,7 @@ const getLocationBadge = () => {
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
+    
     return () => {
       clearInterval(timer);
       if (heartbeatInterval) clearInterval(heartbeatInterval);
@@ -1011,6 +1106,26 @@ const getLocationBadge = () => {
     }
   }, [activeSession, location]);
 
+  // Listen for regularization approved events
+  useEffect(() => {
+    const handleRegularizationEvent = () => {
+      console.log('Regularization approved, refreshing session...');
+      fetchTodayAttendance();
+      fetchMissedClockOuts();
+      fetchAttendanceHistory();
+      // Clear any stale session
+      setActiveSession(null);
+      clearSessionFromStorage();
+      setHasClockedOutToday(false);
+    };
+    
+    window.addEventListener('regularizationApproved', handleRegularizationEvent);
+    
+    return () => {
+      window.removeEventListener('regularizationApproved', handleRegularizationEvent);
+    };
+  }, []);
+
   return (
     <div className="p-2 p-md-3 p-lg-4" style={{ backgroundColor: '#f8f9fc', minHeight: '100vh' }}>
       <h5 className="mb-4 d-flex align-items-center">
@@ -1018,51 +1133,122 @@ const getLocationBadge = () => {
         Attendance Management
       </h5>
 
-      {missedClockOuts.length > 0 && missedClockOuts.some(r => !r.is_regularized && !r.regularization_requested) && (
-        <Card className="mb-4 border-warning bg-warning bg-opacity-10">
-          <Card.Body className="p-3">
-            <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
-              <div>
-                <FaExclamationTriangle className="text-warning me-2" size={20} />
-                <strong>Missed Clock-out Detected!</strong>
-                <div className="small text-muted mt-1">
-                  You have {missedClockOuts.filter(r => !r.is_regularized && !r.regularization_requested).length} incomplete attendance record(s):
+      {/* Regularization Requests Section */}
+      {missedClockOuts.length > 0 && (
+        <>
+          {/* Eligible Records (Can Regularize) */}
+          {missedClockOuts.some(r => r.can_regularize === true && !r.regularization_requested && !r.is_regularized) && (
+            <Card className="mb-4 border-warning bg-warning bg-opacity-10">
+              <Card.Body className="p-3">
+                <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+                  <div>
+                    <FaExclamationTriangle className="text-warning me-2" size={20} />
+                    <strong>Regularization Available!</strong>
+                    <div className="small text-muted mt-1">
+                      You have completed your full shift on the following day(s). Please request regularization to update your attendance:
+                    </div>
+                    <div className="mt-2">
+                      {missedClockOuts.filter(r => r.can_regularize === true && !r.regularization_requested && !r.is_regularized).map(record => (
+                        <Badge
+                          key={record.id}
+                          bg="light"
+                          text="dark"
+                          className="me-2 mb-1 p-2"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => handleOpenRegularizationModal(record)}
+                        >
+                          <FaCalendarAlt className="me-1" size={10} />
+                          {record.attendance_date}
+                          <span className="ms-1 text-success">
+                            ({record.total_hours_worked}h worked / {record.expected_hours}h required)
+                          </span>
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  <Button
+                    variant="warning"
+                    size="sm"
+                    onClick={() => {
+                      const firstEligible = missedClockOuts.find(r => r.can_regularize === true && !r.regularization_requested && !r.is_regularized);
+                      if (firstEligible) handleOpenRegularizationModal(firstEligible);
+                    }}
+                  >
+                    <FaRegClock className="me-2" />
+                    Request Regularization
+                  </Button>
                 </div>
-                <div className="mt-2">
-                  {missedClockOuts.filter(r => !r.is_regularized && !r.regularization_requested).map(record => (
-                    <Badge
-                      key={record.id}
-                      bg="light"
-                      text="dark"
-                      className="me-2 mb-1 p-2"
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => handleOpenRegularizationModal(record)}
-                    >
-                      <FaCalendarAlt className="me-1" size={10} />
-                      {record.attendance_date}
-                      <span className="ms-1 text-muted">
-                        (Clock-in: {record.clock_in ? formatTimeIST(record.clock_in_ist || record.clock_in) : 'N/A'})
-                      </span>
-                    </Badge>
-                  ))}
+              </Card.Body>
+            </Card>
+          )}
+
+          {/* Pending Requests */}
+          {missedClockOuts.some(r => r.regularization_requested && r.regularization_status === 'pending') && (
+            <Card className="mb-4 border-info bg-info bg-opacity-10">
+              <Card.Body className="p-3">
+                <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+                  <div>
+                    <FaClock className="text-info me-2" size={20} />
+                    <strong>Regularization Requests Pending</strong>
+                    <div className="small text-muted mt-1">
+                      Your regularization request(s) are pending admin approval:
+                    </div>
+                    <div className="mt-2">
+                      {missedClockOuts.filter(r => r.regularization_requested && r.regularization_status === 'pending').map(record => (
+                        <Badge
+                          key={record.id}
+                          bg="light"
+                          text="dark"
+                          className="me-2 mb-1 p-2"
+                        >
+                          <FaCalendarAlt className="me-1" size={10} />
+                          {record.attendance_date}
+                          <span className="ms-1 text-warning">(Pending Approval)</span>
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <Button
-                variant="warning"
-                size="sm"
-                onClick={() => {
-                  const firstMissed = missedClockOuts.find(r => !r.is_regularized && !r.regularization_requested);
-                  if (firstMissed) handleOpenRegularizationModal(firstMissed);
-                }}
-              >
-                <FaRegClock className="me-2" />
-                Request Regularization
-              </Button>
-            </div>
-          </Card.Body>
-        </Card>
+              </Card.Body>
+            </Card>
+          )}
+
+          {/* Incomplete Hours (Not Yet Eligible) */}
+          {missedClockOuts.some(r => !r.can_regularize && !r.regularization_requested && !r.is_regularized && r.total_hours_worked > 0) && (
+            <Card className="mb-4 border-secondary bg-light">
+              <Card.Body className="p-3">
+                <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+                  <div>
+                    <FaClock className="text-secondary me-2" size={20} />
+                    <strong>Incomplete Work Days</strong>
+                    <div className="small text-muted mt-1">
+                      You need to complete {missedClockOuts[0]?.expected_hours || 9} hours before requesting regularization:
+                    </div>
+                    <div className="mt-2">
+                      {missedClockOuts.filter(r => !r.can_regularize && !r.regularization_requested && !r.is_regularized && r.total_hours_worked > 0).map(record => (
+                        <Badge
+                          key={record.id}
+                          bg="light"
+                          text="dark"
+                          className="me-2 mb-1 p-2"
+                        >
+                          <FaCalendarAlt className="me-1" size={10} />
+                          {record.attendance_date}
+                          <span className="ms-1 text-danger">
+                            ({record.total_hours_worked}h / {record.expected_hours}h - Need {record.hours_needed}h more)
+                          </span>
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </Card.Body>
+            </Card>
+          )}
+        </>
       )}
 
+      {/* Rest of the component remains the same */}
       <Card className="mb-4 border-0 shadow-sm">
         <Card.Body className="p-2 p-md-3">
           <Row className="align-items-center g-3">

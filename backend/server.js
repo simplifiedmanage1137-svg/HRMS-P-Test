@@ -114,7 +114,22 @@ const corsOptions = {
 // Apply CORS middleware FIRST
 app.use(cors(corsOptions));
 
-app.options('*', cors(corsOptions));
+// Handle preflight OPTIONS requests manually (replaces app.options('*', cors(corsOptions)))
+app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+        // Set CORS headers for preflight requests
+        const origin = req.headers.origin;
+        if (!origin || uniqueAllowedOrigins.includes(origin)) {
+            res.header('Access-Control-Allow-Origin', origin || uniqueAllowedOrigins[0]);
+        }
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, employee-id, X-Employee-Id');
+        res.header('Access-Control-Allow-Credentials', 'true');
+        res.header('Access-Control-Max-Age', '86400'); // 24 hours
+        return res.status(200).end();
+    }
+    next();
+});
 
 // Additional CORS logging middleware
 app.use((req, res, next) => {
@@ -603,6 +618,79 @@ process.on('unhandledRejection', (reason, promise) => {
     
     if (process.env.NODE_ENV === 'production') {
         process.exit(1);
+    }
+});
+
+// In server.js - Add temporary debug route
+app.get('/api/debug/regularization-ids', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { data } = await supabase
+            .from('regularization_requests')
+            .select('id, status')
+            .limit(10);
+        
+        res.json({
+            success: true,
+            ids: data.map(d => ({
+                id: d.id,
+                type: typeof d.id,
+                string_version: String(d.id)
+            }))
+        });
+    } catch (error) {
+        res.json({ error: error.message });
+    }
+});
+
+// Add this before your routes
+app.get('/api/debug/routes', (req, res) => {
+    const routes = [];
+    
+    // Function to extract routes from app
+    function printRoutes(stack, basePath = '') {
+        stack.forEach(layer => {
+            if (layer.route) {
+                const methods = Object.keys(layer.route.methods).join(', ').toUpperCase();
+                routes.push({
+                    path: basePath + layer.route.path,
+                    methods: methods
+                });
+            } else if (layer.name === 'router' && layer.handle.stack) {
+                printRoutes(layer.handle.stack, basePath + (layer.regexp.source.replace(/\\/g, '').replace(/\^|\?/g, '').replace(/\//g, '')));
+            }
+        });
+    }
+    
+    printRoutes(app._router.stack);
+    res.json({
+        success: true,
+        routes: routes.filter(r => r.path.includes('regularization'))
+    });
+});
+
+// Add a test endpoint to check database connectivity
+app.get('/api/test-supabase', async (req, res) => {
+    try {
+        const startTime = Date.now();
+        const { data, error } = await supabase
+            .from('regularization_requests')
+            .select('count', { count: 'exact', head: true });
+        
+        const duration = Date.now() - startTime;
+        
+        if (error) throw error;
+        
+        res.json({
+            success: true,
+            message: 'Supabase connected',
+            response_time_ms: duration,
+            count: data
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 

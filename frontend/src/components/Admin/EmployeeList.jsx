@@ -1,7 +1,7 @@
-// components/Admin/EmployeeList.jsx
+// components/Admin/EmployeeList.jsx - Fixed Header
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Card, Modal, Alert, Badge, Spinner } from 'react-bootstrap';
-import { FaEdit, FaTrash, FaEye, FaPlus, FaDownload, FaFilePdf, FaFileImage, FaFileAlt } from 'react-icons/fa';
+import { Table, Button, Card, Modal, Alert, Badge, Spinner, Form, InputGroup } from 'react-bootstrap';
+import { FaEdit, FaTrash, FaEye, FaPlus, FaDownload, FaFilePdf, FaFileImage, FaFileAlt, FaSearch, FaTimes, FaSyncAlt } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
@@ -11,6 +11,8 @@ import EmployeeProfileView from './EmployeeProfileView';
 
 const EmployeeList = () => {
   const [employees, setEmployees] = useState([]);
+  const [filteredEmployees, setFilteredEmployees] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -31,6 +33,11 @@ const EmployeeList = () => {
     fetchEmployees();
   }, []);
 
+  // Filter employees whenever searchTerm or employees change
+  useEffect(() => {
+    filterEmployees();
+  }, [searchTerm, employees]);
+
   // Refresh employees when update occurs
   useEffect(() => {
     if (employeeUpdate) {
@@ -41,7 +48,6 @@ const EmployeeList = () => {
   const fetchEmployees = async () => {
     try {
       setLoading(true);
-      // Add filter to get only active employees
       const response = await axios.get(`${API_ENDPOINTS.EMPLOYEES}?active=true`);
 
       console.log('🔍 API Response:', response);
@@ -56,11 +62,12 @@ const EmployeeList = () => {
         employeesData = [];
       }
 
-      // Filter out inactive employees on frontend as backup
+      // Filter out inactive employees
       employeesData = employeesData.filter(emp => emp.is_active !== false);
 
       console.log('✅ Active employees:', employeesData.length);
       setEmployees(employeesData);
+      setFilteredEmployees(employeesData);
       setError('');
     } catch (error) {
       console.error('❌ Error fetching employees:', error);
@@ -69,6 +76,39 @@ const EmployeeList = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const filterEmployees = () => {
+    if (!searchTerm.trim()) {
+      setFilteredEmployees(employees);
+      return;
+    }
+
+    const searchLower = searchTerm.toLowerCase().trim();
+    const filtered = employees.filter(emp => {
+      const employeeId = (emp.employee_id || '').toLowerCase();
+      const firstName = (emp.first_name || '').toLowerCase();
+      const lastName = (emp.last_name || '').toLowerCase();
+      const fullName = `${emp.first_name || ''} ${emp.last_name || ''}`.toLowerCase();
+      const middleName = (emp.middle_name || '').toLowerCase();
+      const department = (emp.department || '').toLowerCase();
+      const designation = (emp.designation || '').toLowerCase();
+
+      return employeeId.includes(searchLower) ||
+             firstName.includes(searchLower) ||
+             lastName.includes(searchLower) ||
+             fullName.includes(searchLower) ||
+             middleName.includes(searchLower) ||
+             department.includes(searchLower) ||
+             designation.includes(searchLower);
+    });
+
+    setFilteredEmployees(filtered);
+    console.log(`🔍 Search: "${searchTerm}" found ${filtered.length} employees`);
+  };
+
+  const clearSearch = () => {
+    setSearchTerm('');
   };
 
   const fetchEmployeeDocuments = async (employee) => {
@@ -80,7 +120,6 @@ const EmployeeList = () => {
       const response = await axios.get(API_ENDPOINTS.EMPLOYEE_DOCUMENTS(employee.employee_id));
       console.log('Documents received:', response.data);
 
-      // Process documents - filter out null/empty values
       const docs = Object.entries(response.data)
         .filter(([key, value]) => value && value !== 'null' && value !== '')
         .map(([key, value]) => ({
@@ -132,7 +171,6 @@ const EmployeeList = () => {
     return <FaFileAlt className="text-secondary" size={20} />;
   };
 
-  // View Document Function - Using blob method
   const handleViewDocument = async (doc) => {
     try {
       if (!selectedEmployeeForDocs) {
@@ -145,27 +183,21 @@ const EmployeeList = () => {
 
       setDocLoading(true);
 
-      // Make API call with responseType blob (token will be sent automatically via axios)
       const response = await axios.get(
         API_ENDPOINTS.EMPLOYEE_DOCUMENT_BY_TYPE(selectedEmployeeForDocs.employee_id, doc.type),
         {
           responseType: 'blob',
-          params: { inline: true } // Tell backend to send inline disposition
+          params: { inline: true }
         }
       );
 
-      // Create blob from response
       const blob = new Blob([response.data], {
         type: response.headers['content-type'] || 'application/octet-stream'
       });
 
-      // Create object URL
       const url = window.URL.createObjectURL(blob);
-
-      // Open in new tab
       window.open(url, '_blank');
 
-      // Clean up after some time
       setTimeout(() => {
         window.URL.revokeObjectURL(url);
       }, 1000);
@@ -178,7 +210,6 @@ const EmployeeList = () => {
     }
   };
 
-  // Download Document Function
   const handleDownloadDocument = async (doc) => {
     try {
       if (!selectedEmployeeForDocs) {
@@ -199,12 +230,10 @@ const EmployeeList = () => {
         }
       );
 
-      // Create blob from response
       const blob = new Blob([response.data], {
         type: response.headers['content-type'] || 'application/octet-stream'
       });
 
-      // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = window.document.createElement('a');
       link.href = url;
@@ -212,7 +241,6 @@ const EmployeeList = () => {
       window.document.body.appendChild(link);
       link.click();
 
-      // Clean up
       setTimeout(() => {
         window.URL.revokeObjectURL(url);
         window.document.body.removeChild(link);
@@ -310,18 +338,69 @@ const EmployeeList = () => {
       )}
 
       <Card className="border-0 shadow-sm">
-        <Card.Header className="bg-light py-2 d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2">
-          <h5 className="mb-0 fw-semibold">Employee List</h5>
-          <Badge bg="secondary" pill className="ms-0 ms-sm-auto">
-            Total: {employees.length} Employees
-          </Badge>
+        <Card.Header className="bg-light py-2">
+          {/* FIXED: Single line header with Employee List and Search */}
+          <div className="d-flex justify-content-between align-items-center gap-2">
+            <h5 className="mb-0 fw-semibold text-nowrap">Employee List</h5>
+            <div className="d-flex gap-2 flex-shrink-0">
+              <InputGroup size="sm" style={{ width: '280px' }}>
+                <InputGroup.Text className="bg-white">
+                  <FaSearch size={12} className="text-muted" />
+                </InputGroup.Text>
+                <Form.Control
+                  type="text"
+                  placeholder="Search by ID, Name, Department..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="border-start-0"
+                />
+                {searchTerm && (
+                  <Button
+                    variant="outline-secondary"
+                    size="sm"
+                    onClick={clearSearch}
+                    className="border-start-0"
+                  >
+                    <FaTimes size={12} />
+                  </Button>
+                )}
+              </InputGroup>
+              <Button
+                variant="outline-primary"
+                size="sm"
+                onClick={fetchEmployees}
+                title="Refresh List"
+                className="flex-shrink-0"
+              >
+                <FaSyncAlt size={12} />
+              </Button>
+            </div>
+          </div>
         </Card.Header>
         <Card.Body className="p-0">
-          {/* Table with Vertical Scroll - Increased height to fill page */}
+          {/* Search Result Summary */}
+          {searchTerm && (
+            <div className="px-3 py-2 bg-light border-bottom">
+              <small className="text-muted">
+                <FaSearch className="me-1" size={10} />
+                Found <strong>{filteredEmployees.length}</strong> employee{filteredEmployees.length !== 1 ? 's' : ''} matching "{searchTerm}"
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={clearSearch}
+                  className="p-0 ms-2 text-decoration-none"
+                >
+                  Clear search
+                </Button>
+              </small>
+            </div>
+          )}
+
+          {/* Table with Vertical Scroll */}
           <div 
             className="table-responsive" 
             style={{ 
-              maxHeight: 'calc(100vh - 250px)', 
+              maxHeight: 'calc(100vh - 320px)', 
               minHeight: '400px',
               overflowY: 'auto',
               overflowX: 'auto'
@@ -338,11 +417,11 @@ const EmployeeList = () => {
                   <th className="text-nowrap text-dark fw-normal d-none d-sm-table-cell" style={{ width: '10%' }}>Employment Type</th>
                   <th className="text-nowrap text-dark fw-normal d-none d-xl-table-cell" style={{ width: '10%' }}>Joining Date</th>
                   <th className="text-nowrap text-dark fw-normal text-center" style={{ width: '15%' }}>Actions</th>
-                 </tr>
+                </tr>
               </thead>
               <tbody>
-                {employees.length > 0 ? (
-                  employees.map((emp, index) => (
+                {filteredEmployees.length > 0 ? (
+                  filteredEmployees.map((emp, index) => (
                     <tr key={emp.id}>
                       <td className="text-center">{index + 1}</td>
                       <td>
@@ -369,7 +448,6 @@ const EmployeeList = () => {
                       </td>
                       <td>
                         <div className="d-flex gap-2 gap-md-3 align-items-center justify-content-center flex-wrap">
-                          {/* View Profile Icon */}
                           <FaEye
                             size={14}
                             className="text-secondary"
@@ -377,8 +455,6 @@ const EmployeeList = () => {
                             onClick={() => handleViewProfile(emp)}
                             title="View Full Profile"
                           />
-
-                          {/* View Documents Icon */}
                           <FaFileAlt
                             size={14}
                             className="text-info"
@@ -386,8 +462,6 @@ const EmployeeList = () => {
                             onClick={() => handleViewDocuments(emp)}
                             title="View Documents"
                           />
-
-                          {/* Edit Icon - Only for admin */}
                           {user?.role === 'admin' && (
                             <FaEdit
                               size={14}
@@ -397,8 +471,6 @@ const EmployeeList = () => {
                               title="Edit Employee"
                             />
                           )}
-
-                          {/* Delete Icon - Only for admin */}
                           {user?.role === 'admin' && (
                             <FaTrash
                               size={14}
@@ -415,15 +487,32 @@ const EmployeeList = () => {
                 ) : (
                   <tr>
                     <td colSpan="8" className="text-center py-4">
-                      <p className="text-muted small mb-3">No employees found</p>
-                      {user?.role === 'admin' && (
-                        <Button
-                          variant="outline-primary"
-                          size="sm"
-                          onClick={() => navigate('/admin/add-employee')}
-                        >
-                          Add your first employee
-                        </Button>
+                      {searchTerm ? (
+                        <>
+                          <FaSearch size={40} className="text-muted mb-3 opacity-50" />
+                          <p className="text-muted small mb-2">No employees found matching "{searchTerm}"</p>
+                          <Button
+                            variant="link"
+                            size="sm"
+                            onClick={clearSearch}
+                            className="text-decoration-none"
+                          >
+                            Clear search and show all employees
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-muted small mb-3">No employees found</p>
+                          {user?.role === 'admin' && (
+                            <Button
+                              variant="outline-primary"
+                              size="sm"
+                              onClick={() => navigate('/admin/add-employee')}
+                            >
+                              Add your first employee
+                            </Button>
+                          )}
+                        </>
                       )}
                     </td>
                   </tr>
@@ -432,26 +521,26 @@ const EmployeeList = () => {
             </Table>
           </div>
           
-          {/* Optional: Show scroll indicator when there are many rows */}
-          {employees.length > 15 && (
+          {/* Scroll indicator */}
+          {filteredEmployees.length > 15 && (
             <div className="text-center py-1 bg-light border-top">
               <small className="text-muted">
                 <FaEye size={10} className="me-1" />
-                Scroll to view all {employees.length} employees
+                Scroll to view all {filteredEmployees.length} employees
               </small>
             </div>
           )}
         </Card.Body>
       </Card>
 
-      {/* Employee Profile View Modal - Responsive */}
+      {/* Employee Profile View Modal */}
       <EmployeeProfileView
         show={showProfileModal}
         onHide={() => setShowProfileModal(false)}
         employeeId={selectedEmployeeId}
       />
 
-      {/* Documents View Modal - Responsive */}
+      {/* Documents View Modal */}
       <Modal 
         show={showDocumentModal} 
         onHide={() => setShowDocumentModal(false)} 
@@ -540,7 +629,7 @@ const EmployeeList = () => {
         </Modal.Footer>
       </Modal>
 
-      {/* Delete Confirmation Modal - Responsive */}
+      {/* Delete Confirmation Modal */}
       <Modal 
         show={showDeleteModal} 
         onHide={handleCancelDelete} 

@@ -79,6 +79,19 @@ router.get('/pending-requests', verifyToken, isAdmin, async (req, res) => {
 
 // Send update request to employee - UPDATED with document support
 router.post('/send-request', verifyToken, isAdmin, async (req, res) => {
+    const requestedFields = req.body.requested_fields || [];
+    const requestedFieldNames = req.body.requested_field_names || [];
+
+    // Ensure aadhar_number is included if bank section is selected
+    let finalRequestedFields = [...requestedFields];
+    let finalFieldNames = [...requestedFieldNames];
+
+    if (requestedFields.includes('bank')) {
+        if (!finalFieldNames.includes('aadhar_number')) {
+            finalFieldNames.push('aadhar_number');
+        }
+    }
+
     try {
         const { employee_id, requested_fields, notes, document_types } = req.body;
 
@@ -113,7 +126,7 @@ router.post('/send-request', verifyToken, isAdmin, async (req, res) => {
 
         // Create notification for employee
         let notificationMessage = `Admin has requested you to update your ${requested_fields.join(', ')} information.`;
-        
+
         if (isDocumentUpdate) {
             notificationMessage = `Admin has requested you to upload the following documents: ${document_types.join(', ')}.`;
         }
@@ -163,10 +176,10 @@ router.get('/completed-requests', verifyToken, isAdmin, async (req, res) => {
 
         if (error) {
             console.error('❌ Supabase error:', error);
-            return res.status(500).json({ 
-                success: false, 
+            return res.status(500).json({
+                success: false,
                 message: 'Database error',
-                error: error.message 
+                error: error.message
             });
         }
 
@@ -233,10 +246,10 @@ router.get('/completed-requests', verifyToken, isAdmin, async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error fetching completed requests:', error);
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             message: 'Error fetching requests',
-            error: error.message 
+            error: error.message
         });
     }
 });
@@ -327,17 +340,17 @@ router.post('/handle-request', verifyToken, isAdmin, async (req, res) => {
         // For document-only requests, no employee data update needed
         if (action === 'approve' && request.is_document_update) {
             console.log('📝 Document-only request - no employee data to update');
-            
+
             // Optionally update a flag in employees table that documents were updated
             try {
                 const { error: docUpdateError } = await supabase
                     .from('employees')
-                    .update({ 
+                    .update({
                         documents_updated_at: new Date().toISOString(),
-                        last_document_update: request.document_types 
+                        last_document_update: request.document_types
                     })
                     .eq('employee_id', request.employee_id);
-                    
+
                 if (docUpdateError) {
                     console.error('⚠️ Error updating document timestamp:', docUpdateError);
                 }
@@ -351,7 +364,7 @@ router.post('/handle-request', verifyToken, isAdmin, async (req, res) => {
             status: newStatus,
             updated_at: new Date().toISOString()
         };
-        
+
         // Add reviewed_by if available
         if (req.employeeId) {
             updateData.reviewed_by = req.employeeId;
@@ -374,7 +387,7 @@ router.post('/handle-request', verifyToken, isAdmin, async (req, res) => {
         // Create notification for employee
         let notificationMessage = '';
         let notificationTitle = '';
-        
+
         if (action === 'approve') {
             if (request.is_document_update) {
                 notificationTitle = 'Documents Approved';
@@ -420,7 +433,7 @@ router.post('/handle-request', verifyToken, isAdmin, async (req, res) => {
     } catch (error) {
         console.error('❌ Error handling request:', error);
         console.error('Error stack:', error.stack);
-        
+
         res.status(500).json({
             success: false,
             message: 'Error processing request',

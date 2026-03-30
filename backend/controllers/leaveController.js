@@ -2,14 +2,14 @@
 const LeaveYearlyService = require('../services/leaveYearlyService');
 const supabase = require('../config/supabase');
 
-// Get leave balance for employee
+// In leaveController.js - Updated getLeaveBalance
 exports.getLeaveBalance = async (req, res) => {
     try {
         const { employee_id } = req.params;
 
         console.log('📊 Fetching leave balance for employee:', employee_id);
 
-        // Get employee details first
+        // Get employee details
         const { data: employee, error: empError } = await supabase
             .from('employees')
             .select('joining_date, comp_off_balance')
@@ -21,133 +21,169 @@ exports.getLeaveBalance = async (req, res) => {
         const joiningDate = new Date(employee.joining_date);
         const today = new Date();
         const currentYear = today.getFullYear();
+        const currentMonth = today.getMonth();
+        const currentDate = today.getDate();
 
-        // Calculate months completed since joining
-        let totalMonthsCompleted = (today.getFullYear() - joiningDate.getFullYear()) * 12;
-        totalMonthsCompleted += (today.getMonth() - joiningDate.getMonth());
+        // Get last day of current month
+        const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        const isLastDayOfMonth = currentDate === lastDayOfMonth;
+        const currentHour = today.getHours();
+        const isAfter11PM = currentHour >= 23;
 
-        if (today.getDate() < joiningDate.getDate()) {
-            totalMonthsCompleted -= 1;
+        // Check if we should include current month's accrual
+        let includeCurrentMonthAccrual = false;
+        if (isLastDayOfMonth && isAfter11PM) {
+            includeCurrentMonthAccrual = true;
+        } else if (currentDate > lastDayOfMonth) {
+            includeCurrentMonthAccrual = true;
         }
 
-        totalMonthsCompleted = Math.max(0, totalMonthsCompleted);
+        // Calculate months from joining to current date (including current month if complete)
+        let monthsFromJoining = (today.getFullYear() - joiningDate.getFullYear()) * 12;
+        monthsFromJoining += (today.getMonth() - joiningDate.getMonth());
 
-        // Check probation status (6 months)
-        const isEligible = totalMonthsCompleted >= 6;
+        // Adjust for day of month
+        if (today.getDate() < joiningDate.getDate()) {
+            monthsFromJoining -= 1;
+        }
+
+        // Add 1 if current month is complete
+        if (includeCurrentMonthAccrual) {
+            monthsFromJoining = Math.max(0, monthsFromJoining + 1);
+        }
+        monthsFromJoining = Math.max(0, monthsFromJoining);
+
+        // Calculate total accrued leaves from joining (1.5 per month)
+        // ✅ FIX: Show accrued leaves even during probation
+        const totalAccruedOverall = monthsFromJoining * 1.5;
+
+        // Calculate current year's accrual (for display)
+        let currentYearAccrual = 0;
+        let accrualMonthsThisYear = 0;
+
+        if (joiningDate.getFullYear() === currentYear) {
+            // Joined this year
+            const joinMonth = joiningDate.getMonth();
+            let monthsThisYear = currentMonth - joinMonth;
+
+            if (includeCurrentMonthAccrual) {
+                monthsThisYear += 1;
+            }
+            if (today.getDate() < joiningDate.getDate()) {
+                monthsThisYear -= 1;
+            }
+            accrualMonthsThisYear = Math.max(0, monthsThisYear);
+            currentYearAccrual = accrualMonthsThisYear * 1.5;
+        } else {
+            // Joined in previous years
+            let monthsThisYear = currentMonth + 1; // Jan = 1 month
+            if (!includeCurrentMonthAccrual && currentDate <= lastDayOfMonth) {
+                monthsThisYear = Math.max(0, monthsThisYear - 1);
+            }
+            accrualMonthsThisYear = monthsThisYear;
+            currentYearAccrual = accrualMonthsThisYear * 1.5;
+        }
+
+        // Check probation status (6 months from joining)
+        const isProbationComplete = monthsFromJoining >= 6;
 
         // Calculate eligible from date
         const eligibleFromDate = new Date(joiningDate);
         eligibleFromDate.setMonth(eligibleFromDate.getMonth() + 6);
         const eligibleFromDateStr = eligibleFromDate.toISOString().split('T')[0];
 
-        // Get or create leave balance for current year
-        let { data: balance, error: balanceError } = await supabase
-            .from('leave_balance')
-            .select('*')
+        // Get used leaves for current year
+        const { data: usedLeaves, error: usedError } = await supabase
+            .from('leaves')
+            .select('days_count')
             .eq('employee_id', employee_id)
-            .eq('leave_year', currentYear)
-            .maybeSingle();
+            .eq('status', 'approved')
+            .in('leave_type', ['Annual', 'Sick', 'Personal', 'Maternity', 'Paternity', 'Bereavement'])
+            .gte('start_date', `${currentYear}-01-01`)
+            .lte('start_date', `${currentYear}-12-31`);
 
-        if (balanceError) throw balanceError;
+        if (usedError) throw usedError;
+        const used = usedLeaves?.reduce((sum, leave) => sum + (leave.days_count || 0), 0) || 0;
 
-        // If no balance for current year, create it
-        if (!balance) {
-            console.log(`📝 Creating new leave balance for ${employee_id} for year ${currentYear}`);
+        // Get pending leaves for current year
+        const { data: pendingLeaves, error: pendingError } = await supabase
+            .from('leaves')
+            .select('days_count')
+            .eq('employee_id', employee_id)
+            .eq('status', 'pending')
+            .in('leave_type', ['Annual', 'Sick', 'Personal', 'Maternity', 'Paternity', 'Bereavement'])
+            .gte('start_date', `${currentYear}-01-01`)
+            .lte('start_date', `${currentYear}-12-31`);
 
-            // Calculate how many months in current year are completed
-            const monthsInCurrentYear = today.getMonth() + 1;
-            const daysInCurrentMonth = today.getDate();
-            const lastDayOfMonth = new Date(currentYear, today.getMonth() + 1, 0).getDate();
+        if (pendingError) throw pendingError;
+        const pending = pendingLeaves?.reduce((sum, leave) => sum + (leave.days_count || 0), 0) || 0;
 
-            // Count completed months (full months only)
-            let completedMonthsInYear = 0;
-            if (daysInCurrentMonth === lastDayOfMonth) {
-                completedMonthsInYear = monthsInCurrentYear;
-            } else {
-                completedMonthsInYear = Math.max(0, monthsInCurrentYear - 1);
-            }
+        // ✅ FIX: Calculate available balance
+        // During probation: available = 0 (can't use), but total_accrued shows accumulated leaves
+        // After probation: available = total_accrued - used - pending
+        let available = 0;
+        let usableLeaves = 0;
 
-            // Calculate accrued leaves (1.5 per month)
-            const totalAccrued = completedMonthsInYear * 1.5;
-
-            // Get used leaves from current year
-            const { data: usedLeaves, error: usedError } = await supabase
-                .from('leaves')
-                .select('days_count')
-                .eq('employee_id', employee_id)
-                .eq('status', 'approved')
-                .in('leave_type', ['Annual', 'Sick', 'Personal', 'Maternity', 'Paternity', 'Bereavement'])
-                .gte('start_date', `${currentYear}-01-01`)
-                .lte('start_date', `${currentYear}-12-31`);
-
-            if (usedError) throw usedError;
-
-            const used = usedLeaves?.reduce((sum, leave) => sum + (leave.days_count || 0), 0) || 0;
-
-            // Get pending leaves from current year
-            const { data: pendingLeaves, error: pendingError } = await supabase
-                .from('leaves')
-                .select('days_count')
-                .eq('employee_id', employee_id)
-                .eq('status', 'pending')
-                .gte('start_date', `${currentYear}-01-01`)
-                .lte('start_date', `${currentYear}-12-31`);
-
-            if (pendingError) throw pendingError;
-
-            const pending = pendingLeaves?.reduce((sum, leave) => sum + (leave.days_count || 0), 0) || 0;
-
-            // Calculate current balance
-            const currentBalance = Math.max(0, totalAccrued - used - pending);
-
-            // Insert new balance
-            const { error: insertError } = await supabase
-                .from('leave_balance')
-                .insert([{
-                    employee_id,
-                    leave_year: currentYear,
-                    total_accrued: totalAccrued,
-                    total_used: used,
-                    total_pending: pending,
-                    current_balance: currentBalance,
-                    last_updated: today.toISOString()
-                }]);
-
-            if (insertError) throw insertError;
-
-            balance = {
-                total_accrued: totalAccrued,
-                total_used: used,
-                total_pending: pending,
-                current_balance: currentBalance
-            };
+        if (isProbationComplete) {
+            // After probation - can use all accrued leaves
+            usableLeaves = currentYearAccrual;
+            available = Math.max(0, currentYearAccrual - used - pending);
+        } else {
+            // During probation - leaves are accruing but cannot be used
+            usableLeaves = 0;
+            available = 0;
         }
 
-        // Get comp-off balance
-        const compOffBalance = employee.comp_off_balance || 0;
-
-        console.log('📊 Leave balance calculated:', {
-            total_accrued: balance.total_accrued,
-            used: balance.total_used,
-            pending: balance.total_pending,
-            available: balance.current_balance,
-            monthsCompleted: totalMonthsCompleted,
-            isEligible,
-            compOffBalance,
-            year: currentYear
+        console.log('📊 Leave Calculation:', {
+            joining_date: employee.joining_date,
+            months_from_joining: monthsFromJoining,
+            total_accrued_overall: totalAccruedOverall,
+            current_year_accrual: currentYearAccrual,
+            accrual_months_this_year: accrualMonthsThisYear,
+            used: used,
+            pending: pending,
+            available: available,
+            usable_leaves: usableLeaves,
+            is_probation_complete: isProbationComplete
         });
+
+        // Update or create balance record
+        const { error: upsertError } = await supabase
+            .from('leave_balance')
+            .upsert({
+                employee_id,
+                leave_year: currentYear,
+                total_accrued: currentYearAccrual,
+                total_used: used,
+                total_pending: pending,
+                current_balance: available,
+                last_updated: today.toISOString()
+            }, {
+                onConflict: 'employee_id,leave_year'
+            });
+
+        if (upsertError) console.error('Upsert error:', upsertError);
 
         res.json({
             success: true,
-            total_accrued: (balance.total_accrued || 0).toFixed(1),
-            used: (balance.total_used || 0).toFixed(1),
-            pending: (balance.total_pending || 0).toFixed(1),
-            available: (balance.current_balance || 0).toFixed(1),
-            comp_off_balance: compOffBalance.toFixed(1),
-            months_completed: totalMonthsCompleted,
-            is_eligible: isEligible,
+            total_accrued: currentYearAccrual.toFixed(1),
+            used: used.toFixed(1),
+            pending: pending.toFixed(1),
+            available: available.toFixed(1),
+            comp_off_balance: (employee.comp_off_balance || 0).toFixed(1),
+            months_completed: monthsFromJoining,
+            is_probation_complete: isProbationComplete,  // ✅ Make sure this exists
+            is_eligible: isProbationComplete,
             eligible_from_date: eligibleFromDateStr,
-            leave_year: currentYear
+            leave_year: currentYear,
+            joining_date: employee.joining_date,
+            probation_info: {
+                is_active: !isProbationComplete,
+                months_completed: monthsFromJoining,
+                months_remaining: Math.max(0, 6 - monthsFromJoining),
+                eligible_from_date: eligibleFromDateStr,
+                accrued_but_unusable: !isProbationComplete ? currentYearAccrual : 0
+            }
         });
 
     } catch (error) {
@@ -160,7 +196,7 @@ exports.getLeaveBalance = async (req, res) => {
     }
 };
 
-// Apply for leave
+// In leaveController.js - Updated applyLeave function
 exports.applyLeave = async (req, res) => {
     try {
         console.log('='.repeat(50));
@@ -209,18 +245,26 @@ exports.applyLeave = async (req, res) => {
         }
 
         monthsCompleted = Math.max(0, monthsCompleted);
-        const isEligible = monthsCompleted >= 6;
+        const isProbationComplete = monthsCompleted >= 6;
 
-        // Check leave balance for non-Unpaid leaves - FIXED: Direct database query instead of recursive call
-        if (leave_type !== 'Unpaid' && leave_type !== 'Comp-Off') {
-            if (!isEligible) {
+        // Check leave eligibility based on probation status
+        if (!isProbationComplete) {
+            // During probation - only Unpaid and Comp-Off allowed
+            if (leave_type !== 'Unpaid' && leave_type !== 'Comp-Off') {
                 return res.status(400).json({
                     success: false,
-                    message: 'You are not eligible for paid leaves during probation period. Only Unpaid Leave is available.'
+                    message: `During probation period (${monthsCompleted}/6 months completed), you can only apply for Unpaid Leave or Comp-Off. You will be eligible for paid leaves after ${6 - monthsCompleted} more month(s).`,
+                    probation_status: {
+                        months_completed: monthsCompleted,
+                        months_remaining: 6 - monthsCompleted,
+                        eligible_from_date: new Date(joiningDate.setMonth(joiningDate.getMonth() + 6)).toISOString().split('T')[0]
+                    }
                 });
             }
+        }
 
-            // Direct database query for balance
+        // Check leave balance for paid leaves (only if probation is complete)
+        if (isProbationComplete && leave_type !== 'Unpaid' && leave_type !== 'Comp-Off') {
             const { data: balanceData, error: balanceError } = await supabase
                 .from('leave_balance')
                 .select('current_balance')
@@ -235,7 +279,9 @@ exports.applyLeave = async (req, res) => {
             if (available < days_count) {
                 return res.status(400).json({
                     success: false,
-                    message: `Insufficient leave balance. Available: ${available.toFixed(1)} days`
+                    message: `Insufficient leave balance. Available: ${available.toFixed(1)} days. You need ${days_count} days.`,
+                    current_balance: available,
+                    required: days_count
                 });
             }
         }
@@ -282,12 +328,26 @@ exports.applyLeave = async (req, res) => {
 
         console.log('✅ Leave applied successfully:', leaveData[0]);
 
+        // Prepare response message
+        let message = '';
+        if (leave_type === 'Comp-Off') {
+            message = 'Comp-Off request submitted successfully!';
+        } else if (!isProbationComplete) {
+            message = `Leave request submitted successfully! Note: You are still in probation (${monthsCompleted}/6 months). This will be treated as Unpaid Leave.`;
+        } else {
+            message = 'Leave request submitted successfully!';
+        }
+
         res.json({
             success: true,
-            message: leave_type === 'Comp-Off'
-                ? 'Comp-Off request submitted successfully!'
-                : 'Leave request submitted successfully!',
-            leave: leaveData[0]
+            message: message,
+            leave: leaveData[0],
+            probation_status: !isProbationComplete ? {
+                is_active: true,
+                months_completed: monthsCompleted,
+                months_remaining: 6 - monthsCompleted,
+                eligible_from_date: new Date(joiningDate.setMonth(joiningDate.getMonth() + 6)).toISOString().split('T')[0]
+            } : null
         });
 
     } catch (error) {

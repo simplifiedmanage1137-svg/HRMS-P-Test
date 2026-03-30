@@ -1,37 +1,37 @@
 // src/components/Employee/Profile.jsx
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, Row, Col, Badge, Spinner, Alert, Table, 
-  Button, ProgressBar, ListGroup 
+import {
+    Card, Row, Col, Badge, Spinner, Alert, Table,
+    Button, ProgressBar, ListGroup
 } from 'react-bootstrap';
-import { 
-  FaUserCircle, 
-  FaCalendar, 
-  FaBriefcase, 
-  FaMoneyBill, 
-  FaClock, 
-  FaEnvelope, 
-  FaIdCard,
-  FaMapMarkerAlt,
-  FaFileSignature,
-  FaPhoneAlt,
-  FaUmbrellaBeach,
-  FaRupeeSign,
-  FaCheckCircle,
-  FaTimesCircle,
-  FaHourglassHalf,
-  FaEye,
-  FaBuilding,
-  FaUserTie,
-  FaHeartbeat,
-  FaUniversity,
-  FaCreditCard,
-  FaFilePdf,
-  FaDownload,
-  FaEdit,
-  FaInfoCircle,
-  FaExclamationTriangle,
-  FaTrophy
+import {
+    FaUserCircle,
+    FaCalendar,
+    FaBriefcase,
+    FaMoneyBill,
+    FaClock,
+    FaEnvelope,
+    FaIdCard,
+    FaMapMarkerAlt,
+    FaFileSignature,
+    FaPhoneAlt,
+    FaUmbrellaBeach,
+    FaRupeeSign,
+    FaCheckCircle,
+    FaTimesCircle,
+    FaHourglassHalf,
+    FaEye,
+    FaBuilding,
+    FaUserTie,
+    FaHeartbeat,
+    FaUniversity,
+    FaCreditCard,
+    FaFilePdf,
+    FaDownload,
+    FaEdit,
+    FaInfoCircle,
+    FaExclamationTriangle,
+    FaTrophy
 } from 'react-icons/fa';
 import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
@@ -44,7 +44,7 @@ const Profile = () => {
     const { user } = useAuth();
     const { employeeUpdate, clearEmployeeUpdate, showNotification } = useNotification();
     const navigate = useNavigate();
-    
+
     const [employee, setEmployee] = useState(null);
     const [leaveBalance, setLeaveBalance] = useState({
         available: '0',
@@ -91,13 +91,13 @@ const Profile = () => {
     const fetchEmployeeProfile = async () => {
         try {
             setLoading(true);
-            
+
             let empData = user?.employeeData;
             if (!empData && user?.employeeId) {
                 const response = await axios.get(API_ENDPOINTS.EMPLOYEE_PROFILE(user?.employeeId));
                 empData = response.data;
             }
-            
+
             if (empData) {
                 setEmployee(empData);
             }
@@ -174,7 +174,7 @@ const Profile = () => {
     };
 
     const getLeaveStatusBadge = (status) => {
-        switch(status) {
+        switch (status) {
             case 'approved':
                 return <Badge bg="success" pill className="d-inline-flex align-items-center"><FaCheckCircle className="me-1" size={10} /> Approved</Badge>;
             case 'pending':
@@ -245,8 +245,8 @@ const Profile = () => {
                     <Badge bg="dark" className="px-3 py-2">
                         ID: {employee.employee_id}
                     </Badge>
-                    <Button 
-                        variant="outline-primary" 
+                    <Button
+                        variant="outline-primary"
                         size="sm"
                         onClick={handleEditProfile}
                         className="d-inline-flex align-items-center"
@@ -266,7 +266,7 @@ const Profile = () => {
                             size="sm"
                             onClick={() => setActiveTab('personal')}
                             className="me-1 rounded-0 border-0 text-nowrap"
-                            style={{ 
+                            style={{
                                 backgroundColor: activeTab === 'personal' ? '#0d6efd' : '#f8f9fa',
                                 color: activeTab === 'personal' ? 'white' : '#6c757d',
                                 borderBottom: activeTab === 'personal' ? '3px solid #0d6efd' : '3px solid transparent',
@@ -281,7 +281,7 @@ const Profile = () => {
                             size="sm"
                             onClick={() => setActiveTab('leave')}
                             className="me-1 rounded-0 border-0 text-nowrap"
-                            style={{ 
+                            style={{
                                 backgroundColor: activeTab === 'leave' ? '#0d6efd' : '#f8f9fa',
                                 color: activeTab === 'leave' ? 'white' : '#6c757d',
                                 borderBottom: activeTab === 'leave' ? '3px solid #0d6efd' : '3px solid transparent',
@@ -296,7 +296,7 @@ const Profile = () => {
                             size="sm"
                             onClick={() => setActiveTab('comp-off')}
                             className="me-1 rounded-0 border-0 text-nowrap"
-                            style={{ 
+                            style={{
                                 backgroundColor: activeTab === 'comp-off' ? '#0d6efd' : '#f8f9fa',
                                 color: activeTab === 'comp-off' ? 'white' : '#6c757d',
                                 borderBottom: activeTab === 'comp-off' ? '3px solid #0d6efd' : '3px solid transparent',
@@ -311,7 +311,7 @@ const Profile = () => {
                             size="sm"
                             onClick={() => setActiveTab('bank')}
                             className="me-1 rounded-0 border-0 text-nowrap"
-                            style={{ 
+                            style={{
                                 backgroundColor: activeTab === 'bank' ? '#0d6efd' : '#f8f9fa',
                                 color: activeTab === 'bank' ? 'white' : '#6c757d',
                                 borderBottom: activeTab === 'bank' ? '3px solid #0d6efd' : '3px solid transparent',
@@ -326,7 +326,7 @@ const Profile = () => {
                             size="sm"
                             onClick={() => setActiveTab('salary')}
                             className="me-1 rounded-0 border-0 text-nowrap"
-                            style={{ 
+                            style={{
                                 backgroundColor: activeTab === 'salary' ? '#0d6efd' : '#f8f9fa',
                                 color: activeTab === 'salary' ? 'white' : '#6c757d',
                                 borderBottom: activeTab === 'salary' ? '3px solid #0d6efd' : '3px solid transparent',
@@ -341,7 +341,7 @@ const Profile = () => {
                             size="sm"
                             onClick={() => setActiveTab('policy')}
                             className="me-1 rounded-0 border-0 text-nowrap"
-                            style={{ 
+                            style={{
                                 backgroundColor: activeTab === 'policy' ? '#0d6efd' : '#f8f9fa',
                                 color: activeTab === 'policy' ? 'white' : '#6c757d',
                                 borderBottom: activeTab === 'policy' ? '3px solid #0d6efd' : '3px solid transparent',
@@ -353,7 +353,7 @@ const Profile = () => {
                         </Button>
                     </div>
                 </Card.Header>
-                
+
                 <Card.Body className="p-2 p-md-3">
                     {/* Personal Tab */}
                     {activeTab === 'personal' && (
@@ -364,13 +364,13 @@ const Profile = () => {
                                     <Card.Body className="p-2 p-md-3">
                                         <div className="mb-3">
                                             {employee.profile_image && !imageError ? (
-                                                <img 
+                                                <img
                                                     src={`${API_ENDPOINTS.EMPLOYEE_DOCUMENT_BY_TYPE(employee.employee_id, 'profile_image')}?inline=true`}
                                                     alt="Profile"
                                                     className="rounded-circle border"
-                                                    style={{ 
-                                                        width: '100px', 
-                                                        height: '100px', 
+                                                    style={{
+                                                        width: '100px',
+                                                        height: '100px',
                                                         objectFit: 'cover',
                                                         border: '3px solid #4e73df'
                                                     }}
@@ -385,7 +385,7 @@ const Profile = () => {
                                         </h6>
                                         <p className="text-muted small mb-2 text-truncate">{employee.designation}</p>
                                         <Badge bg="info" className="px-3 py-2 mb-2 small">{employee.employment_type}</Badge>
-                                        
+
                                         <div className="text-start mt-3">
                                             <ListGroup variant="flush" className="border-0">
                                                 <ListGroup.Item className="px-0 py-1 border-0 bg-transparent d-flex align-items-center">
@@ -535,10 +535,26 @@ const Profile = () => {
                                         )}
 
                                         <div className="text-center mb-3">
-                                            <h2 className="display-5 text-primary fw-bold">{leaveBalance.available}</h2>
-                                            <p className="text-muted small">Available Leaves</p>
+                                            <h2 className={`display-5 fw-bold ${leaveBalance.is_probation_complete ? 'text-primary' : 'text-info'}`}>
+                                                {leaveBalance.is_probation_complete ? leaveBalance.available : '0'}
+                                            </h2>
+                                            <p className="text-muted small">
+                                                {leaveBalance.is_probation_complete ? 'Available Leaves' : 'Leaves Available'}
+                                            </p>
+                                            {!leaveBalance.is_probation_complete && (
+                                                <div className="mt-2">
+                                                    <Badge bg="info" className="mb-1">
+                                                        Total Accrued: {leaveBalance.total_accrued} days
+                                                    </Badge>
+                                                    <div className="small text-muted mt-1">
+                                                        <FaInfoCircle className="me-1" size={10} />
+                                                        You have earned {leaveBalance.total_accrued} leaves during probation.
+                                                        These will be available for use after probation completion.
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
-                                        
+
                                         <div className="mb-3">
                                             <div className="d-flex justify-content-between mb-1 small">
                                                 <span className="text-muted">Total Accrued:</span>
@@ -585,9 +601,9 @@ const Profile = () => {
                                                 </Alert>
                                             )}
 
-                                            <ProgressBar 
-                                                now={parseFloat(calculateLeavePercentage())} 
-                                                variant="success" 
+                                            <ProgressBar
+                                                now={parseFloat(calculateLeavePercentage())}
+                                                variant="success"
                                                 style={{ height: '6px' }}
                                                 className="mb-1"
                                             />
@@ -596,9 +612,9 @@ const Profile = () => {
                                             </small>
                                         </div>
 
-                                        <Button 
-                                            variant="primary" 
-                                            size="sm" 
+                                        <Button
+                                            variant="primary"
+                                            size="sm"
                                             className="w-100"
                                             onClick={() => navigate('/apply-leave')}
                                         >
@@ -634,8 +650,8 @@ const Profile = () => {
                                                         {leaveRequests.map((leave, index) => (
                                                             <tr key={leave.id || index}>
                                                                 <td className="small">
-                                                                    <Badge 
-                                                                        bg={leave.leave_type === 'Comp-Off' ? 'purple' : 'secondary'} 
+                                                                    <Badge
+                                                                        bg={leave.leave_type === 'Comp-Off' ? 'purple' : 'secondary'}
                                                                         className="px-2 py-1 text-nowrap"
                                                                     >
                                                                         {leave.leave_type === 'Comp-Off' && '🎉 '}
@@ -660,9 +676,9 @@ const Profile = () => {
                                             <div className="text-center py-4">
                                                 <FaUmbrellaBeach size={40} className="text-muted mb-3 opacity-50" />
                                                 <p className="text-muted small mb-0">No leave requests found</p>
-                                                <Button 
-                                                    variant="link" 
-                                                    size="sm" 
+                                                <Button
+                                                    variant="link"
+                                                    size="sm"
                                                     onClick={() => navigate('/apply-leave')}
                                                     className="mt-2"
                                                 >
@@ -748,12 +764,15 @@ const Profile = () => {
                     )}
 
                     {/* Bank Tab */}
+                  // In Profile.jsx - Add Aadhar Card display in Bank Tab
+
+                    {/* Bank Tab */}
                     {activeTab === 'bank' && (
                         <Card className="border-0 shadow-sm">
                             <Card.Header className="bg-light py-2">
                                 <h6 className="mb-0 small fw-semibold">
                                     <FaUniversity className="me-2" size={12} />
-                                    Bank Details
+                                    Bank Details & ID Proofs
                                 </h6>
                             </Card.Header>
                             <Card.Body className="p-2 p-md-3">
@@ -766,7 +785,9 @@ const Profile = () => {
                                             </ListGroup.Item>
                                             <ListGroup.Item className="px-0 py-2 border-0 d-flex flex-column flex-sm-row">
                                                 <span className="text-muted small" style={{ minWidth: '120px' }}>Account Number:</span>
-                                                <span className="small fw-semibold mt-1 mt-sm-0">{employee.account_number || 'N/A'}</span>
+                                                <span className="small fw-semibold mt-1 mt-sm-0">
+                                                    {employee.account_number ? '••••' + employee.account_number.slice(-4) : 'N/A'}
+                                                </span>
                                             </ListGroup.Item>
                                             <ListGroup.Item className="px-0 py-2 border-0 d-flex flex-column flex-sm-row">
                                                 <span className="text-muted small" style={{ minWidth: '120px' }}>IFSC Code:</span>
@@ -782,11 +803,28 @@ const Profile = () => {
                                             </ListGroup.Item>
                                             <ListGroup.Item className="px-0 py-2 border-0 d-flex flex-column flex-sm-row">
                                                 <span className="text-muted small" style={{ minWidth: '120px' }}>PAN Number:</span>
-                                                <span className="small fw-semibold mt-1 mt-sm-0">{employee.pan_number || 'N/A'}</span>
+                                                <span className="small fw-semibold mt-1 mt-sm-0">
+                                                    {employee.pan_number ? '•••••' + employee.pan_number.slice(-4) : 'N/A'}
+                                                </span>
                                             </ListGroup.Item>
+                                            {/* ✅ Added Aadhar Card Display */}
                                             <ListGroup.Item className="px-0 py-2 border-0 d-flex flex-column flex-sm-row">
-                                                <span className="text-muted small" style={{ minWidth: '120px' }}>Aadhar Number:</span>
-                                                <span className="small fw-semibold mt-1 mt-sm-0">{employee.aadhar_number || 'N/A'}</span>
+                                                <span className="text-muted small" style={{ minWidth: '120px' }}>
+                                                    <FaFileAlt className="me-1 text-primary" size={12} />
+                                                    Aadhar Card:
+                                                </span>
+                                                <span className="small fw-semibold mt-1 mt-sm-0">
+                                                    {employee.aadhar_number ? (
+                                                        <>
+                                                            {employee.aadhar_number.replace(/(\d{4})(\d{4})(\d{4})/, '$1-****-$3')}
+                                                            <Badge bg="success" pill className="ms-2" style={{ fontSize: '8px' }}>
+                                                                Verified
+                                                            </Badge>
+                                                        </>
+                                                    ) : (
+                                                        'Not Provided'
+                                                    )}
+                                                </span>
                                             </ListGroup.Item>
                                         </ListGroup>
                                     </Col>
@@ -838,10 +876,10 @@ const Profile = () => {
                             </Card.Header>
                             <Card.Body className="p-2 p-md-3">
                                 {employee.contract_policy ? (
-                                    <div 
+                                    <div
                                         className="bg-light p-2 p-md-3 rounded"
-                                        style={{ 
-                                            maxHeight: '400px', 
+                                        style={{
+                                            maxHeight: '400px',
                                             overflowY: 'auto',
                                             fontSize: '0.85rem',
                                             whiteSpace: 'pre-line',
