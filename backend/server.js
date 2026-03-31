@@ -58,8 +58,8 @@ const allowedOrigins = [
     'http://127.0.0.1:5174',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
-    'https://employee-management-system-jj6a.vercel.app', // Your Vercel frontend
-    'https://employee-management-system-brvo.onrender.com', // Your backend URL
+    'https://hrms-b2-bindemand-a31u.vercel.app', // Your Vercel frontend
+    'https://hrms-qyui.onrender.com', // Your backend URL
    ...allowedOriginsFromEnv
 ];
 
