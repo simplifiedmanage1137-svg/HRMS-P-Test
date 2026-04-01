@@ -1,23 +1,26 @@
 const supabase = require('../config/supabase');
+const LeaveYearlyService = require('../services/leaveYearlyService');
 
 async function initializeLeaveBalances() {
     console.log('='.repeat(70));
     console.log('🔄 LEAVE BALANCE INITIALIZATION STARTED');
     console.log('='.repeat(70));
     
-    try {
-        // Get all employees
+     try {
+        // Get all employees - use employee_status instead of status
         const { data: employees, error: empError } = await supabase
             .from('employees')
-            .select('employee_id, joining_date, first_name, last_name');
+            .select('employee_id, joining_date, first_name, last_name, employee_status');
 
         if (empError) throw empError;
 
-        console.log(`📊 Found ${employees?.length || 0} employees`);
+         const activeEmployees = employees.filter(emp => emp.employee_status === 'Active');
+
+        console.log(`📊 Found ${activeEmployees?.length || 0} active employees (out of ${employees?.length || 0} total)`);
         console.log('='.repeat(70));
 
-        const results = {
-            total: employees?.length || 0,
+          const results = {
+            total: activeEmployees?.length || 0,
             created: 0,
             updated: 0,
             failed: 0,
@@ -25,6 +28,7 @@ async function initializeLeaveBalances() {
         };
 
         const currentYear = new Date().getFullYear();
+
 
         for (const emp of employees || []) {
             try {
@@ -34,17 +38,8 @@ async function initializeLeaveBalances() {
                 console.log(`\n📋 Processing: ${emp.employee_id} (${emp.first_name} ${emp.last_name})`);
                 console.log(`   Joining Date: ${emp.joining_date}`);
 
-                // Calculate months difference from joining date
-                const yearsDiff = today.getFullYear() - joiningDate.getFullYear();
-                let monthsDiff = (yearsDiff * 12) + (today.getMonth() - joiningDate.getMonth());
-                
-                // Adjust for day of month
-                if (today.getDate() < joiningDate.getDate()) {
-                    monthsDiff--;
-                }
-
-                // Ensure monthsDiff is not negative
-                monthsDiff = Math.max(0, monthsDiff);
+                // Calculate completed months since joining via shared service
+                const monthsDiff = LeaveYearlyService.calculateCompletedMonthsFromJoining(joiningDate, today);
 
                 console.log(`   Months completed since joining: ${monthsDiff}`);
 
