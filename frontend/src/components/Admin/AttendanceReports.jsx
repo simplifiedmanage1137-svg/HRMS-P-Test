@@ -263,11 +263,16 @@ const AttendanceReports = () => {
     }
   };
 
-  // Salary cycle: prev month 26th → current month 25th
+  // Salary cycle: selected month 26th → next month 25th
   const getSalaryCycle = (month, year) => {
-    // e.g. selected month=5 (May) → cycle: Apr 26 – May 25
-    const cycleStart = new Date(year, month - 2, 26); // prev month 26th
-    const cycleEnd   = new Date(year, month - 1, 25); // current month 25th
+    // e.g. selected month=4 (April) → cycle: Apr 26 – May 25
+    const cycleStart = new Date(year, month - 1, 26); // selected month 26th
+    let cycleEnd;
+    if (month === 12) {
+      cycleEnd = new Date(year + 1, 0, 25); // next year Jan 25
+    } else {
+      cycleEnd = new Date(year, month, 25); // next month 25th
+    }
     return { cycleStart, cycleEnd };
   };
 
