@@ -1265,7 +1265,9 @@ const Attendance = () => {
     try {
       const missedResponse = await axios.get(API_ENDPOINTS.ATTENDANCE_MISSED_CLOCKOUTS(user.employeeId));
       const missedRecords = missedResponse.data.missed_clockouts || [];
-      const incompleteRecord = missedRecords.find(r => !r.has_clock_out && !r.is_regularized);
+      const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+      const todayIST = (() => { const ist = new Date(Date.now() + IST_OFFSET_MS); return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth()+1).padStart(2,'0')}-${String(ist.getUTCDate()).padStart(2,'0')}`; })();
+      const incompleteRecord = missedRecords.find(r => !r.has_clock_out && !r.is_regularized && r.attendance_date === todayIST);
 
       if (incompleteRecord) {
         console.log('🔄 Found incomplete record, clocking out for:', incompleteRecord.attendance_date);
@@ -1477,14 +1479,23 @@ const Attendance = () => {
   };
 
   const renderClockButton = () => {
-    const hasIncompleteRecord = missedClockOuts.some(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested && r.regularization_status !== 'rejected');
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const nowISTStr = (() => {
+      const ist = new Date(Date.now() + IST_OFFSET_MS);
+      return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth()+1).padStart(2,'0')}-${String(ist.getUTCDate()).padStart(2,'0')}`;
+    })();
 
-    // ✅ CRITICAL FIX: Check if there's an active session OR today's attendance has clock_in without clock_out
+    // Only count incomplete records from TODAY as active session (not previous days)
+    const hasTodayIncompleteRecord = missedClockOuts.some(r =>
+      !r.has_clock_out && !r.is_regularized &&
+      !r.regularization_requested && r.regularization_status !== 'rejected' &&
+      r.attendance_date === nowISTStr
+    );
+
     const hasActiveSession = activeSession !== null;
     const hasTodayClockInWithoutClockOut = attendance?.clock_in && !attendance?.clock_out;
 
-    // If there's an active session OR today's attendance has clock-in without clock-out, show Clock Out button
-    if (hasActiveSession || hasTodayClockInWithoutClockOut || hasIncompleteRecord) {
+    if (hasActiveSession || hasTodayClockInWithoutClockOut || hasTodayIncompleteRecord) {
       return (
         <Button variant="warning" size="lg" className="w-100 py-3" onClick={handleClockOut} disabled={loading}>
           {loading ? (
