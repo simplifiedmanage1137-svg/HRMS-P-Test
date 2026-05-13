@@ -1234,7 +1234,6 @@ const AddEmployee = () => {
                         id="acceptPolicy"
                         label={
                           <span className="small d-flex align-items-center flex-wrap">
-                            <FaCheckSquare className="me-2 text-primary flex-shrink-0" size={14} />
                             <span>I have read and agree to the terms and conditions</span>
                           </span>
                         }

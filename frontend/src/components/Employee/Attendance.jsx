@@ -631,7 +631,7 @@ const Attendance = () => {
 
       setMissedClockOuts(missedRecords);
 
-      const incompleteRecord = missedRecords.find(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested);
+      const incompleteRecord = missedRecords.find(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested && r.regularization_status !== 'rejected');
 
       if (incompleteRecord && !activeSession) {
         console.log('🔄 Creating virtual session for incomplete record:', incompleteRecord.attendance_date);
@@ -1154,7 +1154,7 @@ const Attendance = () => {
       const missedResponse = await axios.get(API_ENDPOINTS.ATTENDANCE_MISSED_CLOCKOUTS(user.employeeId));
       const missedRecords = missedResponse.data.missed_clockouts || [];
 
-      const incompleteRecord = missedRecords.find(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested);
+      const incompleteRecord = missedRecords.find(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested && r.regularization_status !== 'rejected');
 
       if (incompleteRecord) {
         console.log('⚠️ Found incomplete attendance record:', incompleteRecord);
@@ -1417,10 +1417,10 @@ const Attendance = () => {
   }, [attendance?.clock_in, attendance?.clock_out]);
 
   useEffect(() => {
-    const hasIncomplete = missedClockOuts.some(r => !r.has_clock_out && !r.is_regularized);
+    const hasIncomplete = missedClockOuts.some(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested && r.regularization_status !== 'rejected');
 
     if (hasIncomplete && !activeSession) {
-      const incompleteRecord = missedClockOuts.find(r => !r.has_clock_out && !r.is_regularized);
+      const incompleteRecord = missedClockOuts.find(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested && r.regularization_status !== 'rejected');
       if (incompleteRecord) {
         const virtualSession = {
           session_id: `virtual-${incompleteRecord.id}-${Date.now()}`,
@@ -1449,8 +1449,8 @@ const Attendance = () => {
       setMessage({ type: 'info', text: `Attendance for ${record.attendance_date} has already been regularized.` });
       return;
     }
-    if (record.regularization_requested) {
-      setMessage({ type: 'warning', text: `Regularization already requested for ${record.attendance_date}. Please wait for admin approval.` });
+    if (record.regularization_requested && record.regularization_status !== 'rejected') {
+      setMessage({ type: 'warning', text: `Regularization already requested for ${record.attendance_date}. Please wait for approval.` });
       return;
     }
 
@@ -1477,7 +1477,7 @@ const Attendance = () => {
   };
 
   const renderClockButton = () => {
-    const hasIncompleteRecord = missedClockOuts.some(r => !r.has_clock_out && !r.is_regularized);
+    const hasIncompleteRecord = missedClockOuts.some(r => !r.has_clock_out && !r.is_regularized && !r.regularization_requested && r.regularization_status !== 'rejected');
 
     // ✅ CRITICAL FIX: Check if there's an active session OR today's attendance has clock_in without clock_out
     const hasActiveSession = activeSession !== null;
@@ -1548,7 +1548,7 @@ const Attendance = () => {
         const hasIncompleteRecord = incompleteRecords && incompleteRecords.missed_clockouts &&
           incompleteRecords.missed_clockouts.length > 0;
 
-        if (hasIncompleteRecord && incompleteRecords.missed_clockouts[0] && !incompleteRecords.missed_clockouts[0].has_clock_out) {
+        if (hasIncompleteRecord && incompleteRecords.missed_clockouts[0] && !incompleteRecords.missed_clockouts[0].has_clock_out && !incompleteRecords.missed_clockouts[0].regularization_requested && incompleteRecords.missed_clockouts[0].regularization_status !== 'rejected') {
           const missedRecord = incompleteRecords.missed_clockouts[0];
           console.log('⚠️ Found incomplete record from:', missedRecord.attendance_date);
 
@@ -1674,7 +1674,7 @@ const Attendance = () => {
       {/* Regularization Requests Section */}
       {missedClockOuts.length > 0 && (
         <>
-          {missedClockOuts.some(r => r.can_regularize === true && !r.regularization_requested && !r.is_regularized) && (
+          {missedClockOuts.some(r => r.can_regularize === true && (!r.regularization_requested || r.regularization_status === 'rejected') && !r.is_regularized) && (
             <Card className="mb-4 border-warning bg-warning bg-opacity-10">
               <Card.Body className="p-3">
                 <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
@@ -1685,7 +1685,7 @@ const Attendance = () => {
                       You have completed your full shift on the following day(s). Please request regularization to update your attendance:
                     </div>
                     <div className="mt-2">
-                      {missedClockOuts.filter(r => r.can_regularize === true && !r.regularization_requested && !r.is_regularized).map(record => (
+                      {missedClockOuts.filter(r => r.can_regularize === true && (!r.regularization_requested || r.regularization_status === 'rejected') && !r.is_regularized).map(record => (
                         <Badge
                           key={record.id}
                           bg="light"
@@ -1707,7 +1707,7 @@ const Attendance = () => {
                     variant="warning"
                     size="sm"
                     onClick={() => {
-                      const firstEligible = missedClockOuts.find(r => r.can_regularize === true && !r.regularization_requested && !r.is_regularized);
+                      const firstEligible = missedClockOuts.find(r => r.can_regularize === true && (!r.regularization_requested || r.regularization_status === 'rejected') && !r.is_regularized);
                       if (firstEligible) handleOpenRegularizationModal(firstEligible);
                     }}
                   >
