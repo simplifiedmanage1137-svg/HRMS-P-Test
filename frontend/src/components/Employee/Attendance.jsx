@@ -547,9 +547,26 @@ const Attendance = () => {
 
       // Handle server session
       if (serverSession) {
-        setActiveSession(serverSession);
-        saveSessionToStorage(serverSession);
-        setHasClockedOutToday(false);
+        // Check if session belongs to today or a previous day
+        const sessionClockInIST = serverSession.clock_in_time
+          ? (() => {
+              const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+              const ms = new Date(serverSession.clock_in_time).getTime() + IST_OFFSET_MS;
+              const d = new Date(ms);
+              return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+            })()
+          : null;
+        const todayISTStr = nowIST().split(' ')[0];
+        if (sessionClockInIST && sessionClockInIST !== todayISTStr) {
+          // Previous day's active session — show clock out button for that day
+          setActiveSession(serverSession);
+          saveSessionToStorage(serverSession);
+          setHasClockedOutToday(false);
+        } else {
+          setActiveSession(serverSession);
+          saveSessionToStorage(serverSession);
+          setHasClockedOutToday(false);
+        }
       }
       // If no server session but attendance has clock_in without clock_out
       else if (attendanceData?.clock_in && !attendanceData?.clock_out) {
@@ -1206,7 +1223,7 @@ const Attendance = () => {
         !r.is_regularized &&
         !r.regularization_requested &&
         r.regularization_status !== 'rejected' &&
-        r.is_today === true  // Only block for today's incomplete record (backend uses IST date)
+        (r.is_today === true || r.has_active_session === true)  // Block for today's OR any active session
       );
 
       if (incompleteRecord) {
@@ -1333,10 +1350,12 @@ const Attendance = () => {
         return;
       }
 
-      // Get session ID
-      let sessionId = serverSession?.session_id || activeSession?.session_id || loadSessionFromStorage()?.session_id;
+      // Get session ID - prefer server session, then local state, then storage
+      let sessionId = serverSession?.session_id
+        || activeSession?.session_id
+        || loadSessionFromStorage()?.session_id;
 
-      // If no session found, try from today's attendance
+      // If no session found from above, try from today's attendance
       if (!sessionId && todayAtt && todayAtt.session_id && !todayAtt.clock_out) {
         sessionId = todayAtt.session_id;
         const newSession = {
@@ -1346,6 +1365,19 @@ const Attendance = () => {
         };
         setActiveSession(newSession);
         saveSessionToStorage(newSession);
+      }
+
+      // If still no session, check missed clockouts for any active session record
+      if (!sessionId) {
+        const missedRes = await axios.get(API_ENDPOINTS.ATTENDANCE_MISSED_CLOCKOUTS(user.employeeId));
+        const activeRecord = (missedRes.data.missed_clockouts || []).find(r =>
+          !r.has_clock_out && r.has_active_session
+        );
+        if (activeRecord) {
+          // Use the stored session from localStorage or activeSession state
+          const stored = loadSessionFromStorage();
+          sessionId = stored?.session_id || activeSession?.session_id;
+        }
       }
 
       // Proceed with clock-out
@@ -1585,11 +1617,14 @@ const Attendance = () => {
     // Current working hours (real-time)
     const currentHours = attendance?.total_hours || 0;
 
+    // Only consider attendance that belongs to TODAY
+    const attendanceIsToday = attendance?.attendance_date === nowISTDateStr;
+
     // ✅ Is employee currently clocked in (no clock_out yet)?
-    const isClockedIn = !!attendance?.clock_in && !attendance?.clock_out;
+    const isClockedIn = attendanceIsToday && !!attendance?.clock_in && !attendance?.clock_out;
 
     // ✅ Has employee clocked out today?
-    const isClockedOut = !!attendance?.clock_in && !!attendance?.clock_out;
+    const isClockedOut = attendanceIsToday && !!attendance?.clock_in && !!attendance?.clock_out;
 
     // ✅ Check if there's an active session from server
     const hasActiveSession = !!activeSession;
@@ -1631,7 +1666,7 @@ const Attendance = () => {
     }
 
     // ✅ If clocked in (under 15h) → Show Clock Out button
-    if (isClockedIn && hasActiveSession) {
+    if ((isClockedIn && hasActiveSession) || (!isClockedIn && !isClockedOut && hasActiveSession)) {
       return (
         <div className="text-center">
           <Button variant="warning" size="lg" className="w-100 py-3" onClick={handleClockOut} disabled={loading}>
