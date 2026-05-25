@@ -477,6 +477,10 @@ const SalarySlip = () => {
           <strong>Amount in Words:</strong> Rupees ${numberToWords(Math.round(netSalary))} Only
         </div>
 
+        <div style="font-size: 14px; margin-bottom: 20px;">
+          <strong>Gross Salary (CTC):</strong> <span style="color: #0d6efd; font-weight: bold;">₹${formatCurrency(employee?.gross_salary || employee?.salary)}</span>
+        </div>
+
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; font-size: 14px;">
           <div>For B2BinDemand</div>
           <div>Authorized Signatory</div>
@@ -543,10 +547,9 @@ const SalarySlip = () => {
   };
 
   const getSlipAmounts = (slip) => {
-    if (!slip) return { monthlySalary: 0, basicSalary: 0, deduction: 0, netSalary: 0, overtimeAmount: 0, overtimeHours: 0, unpaidLeaveDays: 0, paidLeaveDays: 0, absentDays: 0, presentDays: 0, unpaidDeduction: 0, perDaySalary: 0, totalWorkingDays: 0 };
+    if (!slip) return { monthlySalary: 0, basicSalary: 0, deduction: 0, netSalary: 0, overtimeAmount: 0, overtimeHours: 0, unpaidLeaveDays: 0, paidLeaveDays: 0, absentDays: 0, presentDays: 0, unpaidDeduction: 0, perDaySalary: 0, totalWorkingDays: 0, holidayDays: 0 };
 
     const monthlySalary    = Number(slip.monthly_salary) || Number(employee?.gross_salary || employee?.salary) || 0;
-    // Use null check instead of || to preserve 0 values correctly
     const basicSalary      = slip.basic_salary != null ? Number(slip.basic_salary) : monthlySalary;
     const deduction        = slip.basic_salary != null && Number(slip.basic_salary) === 0 ? 0 : (Number(slip.dt) || 200);
     const netSalary        = slip.net_salary   != null ? Number(slip.net_salary)   : Math.max(0, basicSalary - deduction);
@@ -558,9 +561,11 @@ const SalarySlip = () => {
     const presentDays      = Number(slip.present_days)      || 0;
     const unpaidDeduction  = Number(slip.unpaid_deduction)  || 0;
     const perDaySalary     = Number(slip.per_day_salary)    || 0;
-    const totalWorkingDays = Number(slip.total_working_days)|| 0;
+    const totalWorkingDays = Number(slip.total_working_days)|| 22;
+    // holidayDays = totalWorkingDays - presentDays - paidLeaveDays - absentDays - unpaidLeaveDays
+    const holidayDays      = Math.max(0, totalWorkingDays - presentDays - paidLeaveDays - absentDays - unpaidLeaveDays);
 
-    return { monthlySalary, basicSalary, deduction, netSalary, overtimeAmount, overtimeHours, unpaidLeaveDays, paidLeaveDays, absentDays, presentDays, unpaidDeduction, perDaySalary, totalWorkingDays };
+    return { monthlySalary, basicSalary, deduction, netSalary, overtimeAmount, overtimeHours, unpaidLeaveDays, paidLeaveDays, absentDays, presentDays, unpaidDeduction, perDaySalary, totalWorkingDays, holidayDays };
   };
 
   const getMonthName = (monthNumber) => {
@@ -612,7 +617,7 @@ const SalarySlip = () => {
       return numToWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + numToWords(n % 10000000) : '');
     };
 
-    return numToWords(num) + ' Only';
+    return numToWords(num);
   };
 
   const handleLogoError = () => {
@@ -1072,12 +1077,13 @@ const SalarySlip = () => {
               {/* Cycle Info */}
               <div className="mb-3 p-2 bg-light rounded small">
                 <strong>Salary Cycle:</strong> {formatCycleDates(selectedSlip)}<br />
-                <strong>Total Working Days (Mon-Fri):</strong> {selectedSlipAmounts.totalWorkingDays} days<br />
+                <strong>Fixed Working Days:</strong> {selectedSlipAmounts.totalWorkingDays} days (Mon–Fri in cycle)<br />
+                <strong>Per Day Salary:</strong> ₹{formatCurrency(selectedSlipAmounts.perDaySalary)}<br />
                 <strong>Present Days:</strong> <span className="text-success">{selectedSlipAmounts.presentDays} days</span><br />
                 {selectedSlipAmounts.paidLeaveDays > 0 && <><strong>Paid Leave:</strong> <span className="text-info">{selectedSlipAmounts.paidLeaveDays} day{selectedSlipAmounts.paidLeaveDays > 1 ? 's' : ''}</span><br /></>}
+                {selectedSlipAmounts.holidayDays > 0 && <><strong>Company Holidays:</strong> <span className="text-primary">{selectedSlipAmounts.holidayDays} day{selectedSlipAmounts.holidayDays > 1 ? 's' : ''} (not deducted)</span><br /></>}
                 {selectedSlipAmounts.unpaidLeaveDays > 0 && <><strong>Unpaid Leave:</strong> <span className="text-danger">{selectedSlipAmounts.unpaidLeaveDays} day{selectedSlipAmounts.unpaidLeaveDays > 1 ? 's' : ''}</span><br /></>}
                 {selectedSlipAmounts.absentDays > 0 && <><strong>Absent:</strong> <span className="text-danger">{selectedSlipAmounts.absentDays} days</span><br /></>}
-                <strong>Per Day Salary:</strong> ₹{formatCurrency(selectedSlipAmounts.perDaySalary)}
               </div>
 
               {/* Earnings Table */}
@@ -1091,26 +1097,38 @@ const SalarySlip = () => {
                   </thead>
                   <tbody>
                     <tr>
-                      <td className="py-1 ps-2">Monthly Gross Salary</td>
+                      <td className="py-1 ps-2">Monthly Gross Salary ({selectedSlipAmounts.totalWorkingDays} working days in cycle)</td>
                       <td className="text-end py-1 pe-2">{formatCurrency(selectedSlipAmounts.monthlySalary)}</td>
                     </tr>
+                    <tr>
+                      <td className="py-1 ps-2">
+                        Earned Salary ({selectedSlipAmounts.presentDays} present
+                        {selectedSlipAmounts.paidLeaveDays > 0 ? ` + ${selectedSlipAmounts.paidLeaveDays} paid leave` : ''}
+                        {selectedSlipAmounts.holidayDays > 0 ? ` + ${selectedSlipAmounts.holidayDays} holiday` : ''}
+                        {' '}× ₹{formatCurrency(selectedSlipAmounts.perDaySalary)}/day)
+                      </td>
+                      <td className="text-end py-1 pe-2 fw-semibold">{formatCurrency(selectedSlipAmounts.basicSalary)}</td>
+                    </tr>
+                    {selectedSlipAmounts.absentDays > 0 && (
+                      <tr style={{ backgroundColor: '#fff3cd' }}>
+                        <td className="py-1 ps-2">
+                          <span className="text-danger">
+                            Absent Deduction ({selectedSlipAmounts.absentDays} day{selectedSlipAmounts.absentDays > 1 ? 's' : ''} × ₹{formatCurrency(selectedSlipAmounts.perDaySalary)}/day)
+                          </span>
+                        </td>
+                        <td className="text-end py-1 pe-2 text-danger fw-bold">- {formatCurrency(selectedSlipAmounts.absentDays * selectedSlipAmounts.perDaySalary)}</td>
+                      </tr>
+                    )}
                     {selectedSlipAmounts.unpaidLeaveDays > 0 && (
                       <tr style={{ backgroundColor: '#fff3cd' }}>
                         <td className="py-1 ps-2">
                           <span className="text-danger">
                             Unpaid Leave Deduction ({selectedSlipAmounts.unpaidLeaveDays} day{selectedSlipAmounts.unpaidLeaveDays > 1 ? 's' : ''} × ₹{formatCurrency(selectedSlipAmounts.perDaySalary)}/day)
                           </span>
-                          <div className="text-muted" style={{ fontSize: '10px' }}>
-                            Based on {selectedSlipAmounts.totalWorkingDays} working days (Mon–Fri)
-                          </div>
                         </td>
                         <td className="text-end py-1 pe-2 text-danger fw-bold">- {formatCurrency(selectedSlipAmounts.unpaidDeduction)}</td>
                       </tr>
                     )}
-                    <tr>
-                      <td className="py-1 ps-2 fw-semibold">Basic Salary (After Unpaid Leave)</td>
-                      <td className="text-end py-1 pe-2 fw-semibold">{formatCurrency(selectedSlipAmounts.basicSalary)}</td>
-                    </tr>
                     <tr style={selectedSlipAmounts.overtimeAmount > 0 ? { backgroundColor: '#d4edda' } : {}}>
                       <td className="py-1 ps-2">
                         <span style={selectedSlipAmounts.overtimeAmount > 0 ? { color: '#28a745' } : {}}>
@@ -1179,6 +1197,11 @@ const SalarySlip = () => {
               {/* Amount in Words */}
               <div className="small mb-4">
                 <strong>Amount in Words:</strong> Rupees {numberToWords(Math.round(selectedSlipAmounts.netSalary))} Only
+              </div>
+
+              {/* Gross Salary */}
+              <div className="small mb-3 p-2 bg-light rounded">
+                <strong>Gross Salary (CTC):</strong> <span className="text-primary fw-bold">₹{formatCurrency(employee?.gross_salary || employee?.salary)}</span>
               </div>
 
               {/* Footer */}

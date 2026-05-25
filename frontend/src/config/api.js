@@ -204,6 +204,7 @@ export const API_ENDPOINTS = {
     PASSWORD_CHANGE: `${API_BASE_URL}/api/auth/change-password`,
     PASSWORD_RESET_REQUEST: `${API_BASE_URL}/api/auth/reset-password-request`,
     PASSWORD_RESET_CONFIRM: `${API_BASE_URL}/api/auth/reset-password-confirm`,
+    PASSWORD_RESET_DIRECT: `${API_BASE_URL}/api/auth/reset-password-direct`,
 
     // Session management
     SESSIONS: `${API_BASE_URL}/api/sessions`,

@@ -541,32 +541,22 @@ const Attendance = () => {
         }
       } else {
         console.log('⚠️ No attendance data for today');
-        setAttendance(null);
-        setHasClockedOutToday(false);
+        // ✅ CRITICAL: Don't clear attendance/session if server has an active session
+        // This handles cross-midnight: attendance_date is yesterday, but session is still active
+        if (!serverSession) {
+          setAttendance(null);
+          setHasClockedOutToday(false);
+        }
+        // If serverSession exists but no todayAttendance = cross-midnight case
+        // attendance state will be set by the serverSession block above via fetchTodayAttendance
       }
 
       // Handle server session
       if (serverSession) {
-        // Check if session belongs to today or a previous day
-        const sessionClockInIST = serverSession.clock_in_time
-          ? (() => {
-              const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-              const ms = new Date(serverSession.clock_in_time).getTime() + IST_OFFSET_MS;
-              const d = new Date(ms);
-              return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-            })()
-          : null;
-        const todayISTStr = nowIST().split(' ')[0];
-        if (sessionClockInIST && sessionClockInIST !== todayISTStr) {
-          // Previous day's active session — show clock out button for that day
-          setActiveSession(serverSession);
-          saveSessionToStorage(serverSession);
-          setHasClockedOutToday(false);
-        } else {
-          setActiveSession(serverSession);
-          saveSessionToStorage(serverSession);
-          setHasClockedOutToday(false);
-        }
+        // Active session exists (today or cross-midnight) → always show Clock Out
+        setActiveSession(serverSession);
+        saveSessionToStorage(serverSession);
+        setHasClockedOutToday(false);
       }
       // If no server session but attendance has clock_in without clock_out
       else if (attendanceData?.clock_in && !attendanceData?.clock_out) {
@@ -581,8 +571,16 @@ const Attendance = () => {
         setHasClockedOutToday(false);
       }
       else if (!serverSession && !attendanceData) {
+        // Only clear session if server confirms no active session AND no attendance
         setActiveSession(null);
         clearSessionFromStorage();
+        setHasClockedOutToday(false);
+      }
+      // ✅ If serverSession exists but attendanceData is null = cross-midnight
+      // activeSession is already set above, attendance will show from previous day's state
+      else if (serverSession && !attendanceData) {
+        // Keep activeSession set (already done above)
+        // attendance state remains as-is (previous day's data still in state)
         setHasClockedOutToday(false);
       }
 
@@ -670,13 +668,15 @@ const Attendance = () => {
         }
       }
 
-      // ✅ If there's an active session from API, sync it
+      // ✅ If there's an active session from API but local state is null, sync it
       if (hasActiveSession && !activeSession) {
-        // Try to get session from storage or fetch it
-        const stored = loadSessionFromStorage();
-        if (stored) {
-          setActiveSession(stored);
-        }
+        try {
+          const todayRes = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
+          if (todayRes.data.active_session) {
+            setActiveSession(todayRes.data.active_session);
+            saveSessionToStorage(todayRes.data.active_session);
+          }
+        } catch (_) {}
       }
 
       // ✅ Show regularization messages only for PAST dates
@@ -1108,19 +1108,14 @@ const Attendance = () => {
           return prev;
         });
       } else if (!todayRecord) {
-        // No record for today - clear stale attendance state
-        // (handles cross-midnight case where yesterday's record is still in state)
+        // No record for today - but DON'T clear attendance if there's an open session
+        // (cross-midnight: yesterday's record is still active)
         setAttendance(prev => {
+          // Only clear if no active session and no open attendance
           if (prev && prev.attendance_date && prev.attendance_date !== todayStr) {
+            // Keep it if clock_in exists without clock_out (cross-midnight active session)
+            if (prev.clock_in && !prev.clock_out) return prev;
             return null;
-          }
-          return prev;
-        });
-        // Also clear active session if no today record and no server session
-        setActiveSession(prev => {
-          if (prev && !prev.is_virtual) {
-            // Will be validated by isValidSession check
-            return prev;
           }
           return prev;
         });
@@ -1319,6 +1314,11 @@ const Attendance = () => {
       setMessage({ type: 'success', text: `Successfully clocked out for ${showPreviousDayClockOut.attendance_date}!` });
       setShowPreviousDayClockOut({ show: false, attendance_id: null, attendance_date: null, clock_in_time: null });
 
+      // Clear active session since previous day is now clocked out
+      setActiveSession(null);
+      clearSessionFromStorage();
+      setHasClockedOutToday(false); // Allow Clock In for new shift
+
       await fetchTodayAttendance();
       await fetchAttendanceHistory();
       await fetchMissedClockOuts();
@@ -1439,20 +1439,11 @@ const Attendance = () => {
       // Real sessions: check server
       const response = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
       const serverSession = response.data.active_session;
-      const todayAttendance = response.data.attendance;
 
-      // Server has matching active session
-      if (serverSession && serverSession.session_id === currentSession.session_id) return true;
+      // ✅ Any active server session = valid (handles cross-midnight where session_id may differ)
+      if (serverSession) return true;
 
-      // No server active session at all - stored session is stale
-      if (!serverSession) return false;
-
-      // Today's attendance is complete (clock_out set) - session no longer valid
-      if (todayAttendance?.clock_out) return false;
-
-      // Today's attendance has clock_in without clock_out - session valid
-      if (todayAttendance?.clock_in && !todayAttendance?.clock_out) return true;
-
+      // No server session = stale local session
       return false;
     } catch (error) {
       return false;
@@ -1467,12 +1458,16 @@ const Attendance = () => {
       if (!valid) {
         setActiveSession(null);
         clearSessionFromStorage();
-        // Check if today's attendance is complete
         try {
           const res = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
           if (res.data.attendance?.clock_out) {
             setHasClockedOutToday(true);
             setMissedClockOuts([]);
+          } else if (res.data.active_session) {
+            // Server has active session but our local one was stale - re-sync
+            setActiveSession(res.data.active_session);
+            saveSessionToStorage(res.data.active_session);
+            setHasClockedOutToday(false);
           }
         } catch (_) { }
       }
@@ -1591,27 +1586,22 @@ const Attendance = () => {
   // In Attendance.jsx - Replace renderClockButton function
 
   const renderClockButton = () => {
-    const REGULARIZATION_THRESHOLD = 15; // hours
-    const nowISTDateStr = nowIST().split(' ')[0];
-
-    // Current working hours (real-time)
+    const REGULARIZATION_THRESHOLD = 15;
     const currentHours = attendance?.total_hours || 0;
 
-    // Only consider attendance that belongs to TODAY
-    const attendanceIsToday = attendance?.attendance_date === nowISTDateStr;
-
-    // ✅ Is employee currently clocked in (no clock_out yet)?
-    const isClockedIn = attendanceIsToday && !!attendance?.clock_in && !attendance?.clock_out;
-
-    // ✅ Has employee clocked out today?
-    const isClockedOut = attendanceIsToday && !!attendance?.clock_in && !!attendance?.clock_out;
-
-    // ✅ Check if there's an active session from server
+    // ✅ PRIMARY signal: active session from server
     const hasActiveSession = !!activeSession;
 
-    // ✅ If active session exists (regardless of attendance date) → Show Clock Out
-    // This handles cross-midnight case where attendance_date is previous day
-    if (hasActiveSession) {
+    // ✅ FALLBACK: attendance exists with clock_in but no clock_out (cross-midnight safety net)
+    const hasOpenAttendance = !!attendance?.clock_in && !attendance?.clock_out;
+
+    // Has employee fully clocked out today?
+    const nowISTDateStr = nowIST().split(' ')[0];
+    const attendanceIsToday = attendance?.attendance_date === nowISTDateStr;
+    const isClockedOut = attendanceIsToday && !!attendance?.clock_in && !!attendance?.clock_out;
+
+    // ✅ Show Clock Out if: active session OR open attendance (no clock_out yet)
+    if (hasActiveSession || hasOpenAttendance) {
       // But first check if hours >= 15 for regularization
       if (currentHours >= REGULARIZATION_THRESHOLD) {
         return (
@@ -1739,9 +1729,6 @@ const Attendance = () => {
   useEffect(() => {
     if (!user?.employeeId) return;
 
-    // ✅ Clear ALL stale attendance sessions from localStorage on mount
-    clearSessionFromStorage();
-
     const initializeSession = async () => {
       try {
         const response = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
@@ -1753,16 +1740,28 @@ const Attendance = () => {
 
         // ✅ CASE 1: No active server session
         if (!serverSession) {
-          setActiveSession(null);
-          clearSessionFromStorage();
+          // Only clear session if no open attendance either
+          const hasOpenAtt = todayAttendance?.clock_in && !todayAttendance?.clock_out;
+          if (!hasOpenAtt) {
+            setActiveSession(null);
+            clearSessionFromStorage();
+          }
 
           if (todayAttendance?.clock_out) {
             setHasClockedOutToday(true);
             setAttendance(todayAttendance);
-          } else if (todayAttendance?.clock_in && !todayAttendance?.clock_out) {
-            // Has clock_in but no active session = data inconsistency
+          } else if (hasOpenAtt) {
+            // Has clock_in but no active session = cross-midnight or data inconsistency
+            // Keep showing Clock Out button
             setHasClockedOutToday(false);
             setAttendance(todayAttendance);
+            const inferredSession = {
+              session_id: todayAttendance.session_id || 'temp-' + Date.now(),
+              clock_in_time: todayAttendance.clock_in_ist || todayAttendance.clock_in,
+              is_virtual: false
+            };
+            setActiveSession(inferredSession);
+            saveSessionToStorage(inferredSession);
           } else {
             setHasClockedOutToday(false);
             setAttendance(null);
@@ -1773,22 +1772,10 @@ const Attendance = () => {
           return;
         }
 
-        // ✅ CASE 2: Active server session exists
+        // ✅ CASE 2: Active server session exists (today or cross-midnight)
         setHasClockedOutToday(false);
         setActiveSession(serverSession);
         saveSessionToStorage(serverSession);
-
-        // Check if hours exceeded 15 for regularization
-        if (todayAttendance && todayAttendance.clock_in && !todayAttendance.clock_out) {
-          const totalMinutes = calculateTotalMinutesFixed(
-            todayAttendance.clock_in_ist || todayAttendance.clock_in,
-            nowIST()
-          );
-          const totalHours = totalMinutes / 60;
-          if (totalHours >= 15) {
-            console.log(`⚠️ ${user.employeeId} has ${totalHours.toFixed(1)}h, can regularize`);
-          }
-        }
 
       } catch (error) {
         console.error('Error initializing:', error);
