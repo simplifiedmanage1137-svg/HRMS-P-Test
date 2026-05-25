@@ -65,6 +65,7 @@ import API_ENDPOINTS from '../../config/api';
 import { useNavigate } from 'react-router-dom';
 import { useNotification } from '../../context/NotificationContext';
 import AdminRatings from './AdminRatings';
+import * as XLSX from 'xlsx';
 // import HistoricalLateMarksUpdater from './HistoricalLateMarksUpdater';
 
 ChartJS.register(
@@ -1295,31 +1296,73 @@ const AdminDashboard = () => {
       setMessage({ type: 'warning', text: 'Please select date range for export' });
       return;
     }
-
     setExporting(true);
     try {
-      let url = '';
-      switch (exportType) {
-        case 'attendance':
-          url = `${API_ENDPOINTS.REPORTS_ATTENDANCE}?start=${exportDateRange.start}&end=${exportDateRange.end}`;
-          break;
-        case 'leave':
-          url = `${API_ENDPOINTS.REPORTS_LEAVE}?start=${exportDateRange.start}&end=${exportDateRange.end}`;
-          break;
-        case 'employees':
-          url = API_ENDPOINTS.EXPORT_EMPLOYEES;
-          break;
-        default:
-          url = API_ENDPOINTS.REPORTS_ATTENDANCE;
+      if (exportType === 'attendance') {
+        const res = await axios.get(`${API_ENDPOINTS.ATTENDANCE_REPORT}?start=${exportDateRange.start}&end=${exportDateRange.end}`);
+        const records = res.data.attendance || [];
+        const rows = records.map((r, i) => ({
+          'Sr No': i + 1,
+          'Employee ID': r.employee_id,
+          'Name': `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+          'Department': r.department || '',
+          'Date': r.attendance_date,
+          'Clock In': r.clock_in_ist || r.clock_in || '',
+          'Clock Out': r.clock_out_ist || r.clock_out || '',
+          'Total Hours': r.total_hours || '',
+          'Late (min)': r.late_minutes || 0,
+          'Status': r.status || ''
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Attendance');
+        XLSX.writeFile(wb, `attendance_${exportDateRange.start}_to_${exportDateRange.end}.xlsx`);
+
+      } else if (exportType === 'leave') {
+        const res = await axios.get(`${API_ENDPOINTS.LEAVES}?all=true`);
+        const leaves = (res.data || []).filter(l => {
+          const d = l.start_date;
+          return d >= exportDateRange.start && d <= exportDateRange.end;
+        });
+        const rows = leaves.map((l, i) => ({
+          'Sr No': i + 1,
+          'Employee ID': l.employee_id,
+          'Name': `${l.first_name || ''} ${l.last_name || ''}`.trim(),
+          'Department': l.department || '',
+          'Leave Type': l.leave_type,
+          'Duration': l.leave_duration,
+          'Start Date': l.start_date,
+          'End Date': l.end_date,
+          'Days': l.days_count,
+          'Status': l.status,
+          'Reason': l.reason || ''
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Leaves');
+        XLSX.writeFile(wb, `leave_${exportDateRange.start}_to_${exportDateRange.end}.xlsx`);
+
+      } else if (exportType === 'employees') {
+        const res = await axios.get(API_ENDPOINTS.EMPLOYEES);
+        const emps = Array.isArray(res.data) ? res.data : res.data?.data || [];
+        const rows = emps.map((e, i) => ({
+          'Sr No': i + 1,
+          'Employee ID': e.employee_id,
+          'First Name': e.first_name,
+          'Last Name': e.last_name,
+          'Email': e.email,
+          'Department': e.department,
+          'Designation': e.designation,
+          'Joining Date': e.joining_date,
+          'Employment Type': e.employment_type,
+          'Gross Salary': e.gross_salary
+        }));
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Employees');
+        XLSX.writeFile(wb, `employees_list.xlsx`);
       }
 
-      const response = await axios.get(url, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `${exportType}_report_${exportDateRange.start}_to_${exportDateRange.end}.xlsx`;
-      link.click();
-      URL.revokeObjectURL(link.href);
       setMessage({ type: 'success', text: 'Export completed successfully!' });
       setShowExportModal(false);
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
