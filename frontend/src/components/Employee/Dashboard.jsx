@@ -25,9 +25,16 @@ import {
   FaStar,
   FaStarHalfAlt,
   FaRegStar,
+  FaLocationArrow,
+  FaMapMarkerAlt,
+  FaExclamationTriangle,
   FaUserTie,
-  FaUserCog
+  FaUserCog,
+  FaSignInAlt,
+  FaSignOutAlt
 } from 'react-icons/fa';
+
+
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import axios from '../../config/axios';
@@ -66,6 +73,176 @@ const EmployeeDashboard = () => {
   const { user } = useAuth();
   const { showNotification, todayEvents, fetchTodayEvents } = useNotification();
   const navigate = useNavigate();
+  // Attendance card state
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [attendance, setAttendance] = useState(null);
+  const [activeSession, setActiveSession] = useState(null);
+  const [hasClockedOutToday, setHasClockedOutToday] = useState(false);
+  const [clockLoading, setClockLoading] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  const OFFICE_COORDS = { radius: 100 };
+  const STORAGE_KEY = `attendance_session_${user?.employeeId}`;
+
+  const saveSession = (s) => localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  const clearSession = () => localStorage.removeItem(STORAGE_KEY);
+
+  const nowIST = () => {
+    const now = new Date();
+    const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${ist.getUTCFullYear()}-${p(ist.getUTCMonth()+1)}-${p(ist.getUTCDate())} ${p(ist.getUTCHours())}:${p(ist.getUTCMinutes())}:${p(ist.getUTCSeconds())}`;
+  };
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTimeIST = (datetime) => {
+    if (!datetime) return '--:--';
+    try {
+      let hourNum, minute;
+      if (typeof datetime === 'string') {
+        if (datetime.includes(' ') && !datetime.includes('T')) {
+          const timePart = datetime.split(' ')[1];
+          const parts = timePart.split(':');
+          hourNum = parseInt(parts[0], 10);
+          minute = parts[1] ? parts[1].padStart(2, '0') : '00';
+        } else if (datetime.includes('T')) {
+          const date = new Date(datetime);
+          if (!isNaN(date.getTime())) {
+            const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+            const istDate = new Date(date.getTime() + IST_OFFSET_MS);
+            hourNum = istDate.getUTCHours();
+            minute = String(istDate.getUTCMinutes()).padStart(2, '0');
+          } else return '--:--';
+        } else if (datetime.match(/^\d{2}:\d{2}:\d{2}$/)) {
+          const parts = datetime.split(':');
+          hourNum = parseInt(parts[0], 10);
+          minute = parts[1];
+        } else return '--:--';
+      } else return '--:--';
+      if (isNaN(hourNum)) return '--:--';
+      const ampm = hourNum >= 12 ? 'PM' : 'AM';
+      const hour12 = hourNum % 12 === 0 ? 12 : hourNum % 12;
+      return `${hour12}:${minute} ${ampm}`;
+    } catch {
+      return '--:--';
+    }
+  };
+
+  const handleClockIn = async () => {
+    setClockLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_IN, {
+        employee_id: user.employeeId,
+        latitude: null, longitude: null, accuracy: null
+      });
+      const clockInIST = response.data.clock_in_ist || response.data.clock_in;
+      const newAttendance = {
+        clock_in: clockInIST,
+        clock_in_ist: clockInIST,
+        clock_in_display: formatTimeIST(clockInIST),
+        late_minutes: response.data.late_minutes || 0,
+        late_display: response.data.late_display || null,
+        status: 'working',
+        attendance_date: response.data.attendance_date || nowIST().split(' ')[0],
+        session_id: response.data.session_id
+      };
+      setAttendance(newAttendance);
+      setTodayAttendance(newAttendance);
+      const session = { session_id: response.data.session_id, clock_in_time: clockInIST };
+      setActiveSession(session);
+      saveSession(session);
+      setHasClockedOutToday(false);
+      setMessage({ type: 'success', text: response.data.message || 'Clocked in successfully!' });
+    } catch (error) {
+      setMessage({ type: 'danger', text: error.response?.data?.message || 'Failed to clock in' });
+    } finally {
+      setClockLoading(false);
+    }
+  };
+
+  const handleClockOut = async () => {
+    setClockLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      const preCheck = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
+      const serverSession = preCheck.data.active_session;
+      if (!serverSession) {
+        setActiveSession(null);
+        clearSession();
+        await fetchTodayAttendance();
+        setClockLoading(false);
+        return;
+      }
+      const response = await axios.post(API_ENDPOINTS.ATTENDANCE_CLOCK_OUT, {
+        employee_id: user.employeeId,
+        session_id: serverSession.session_id,
+        latitude: null, longitude: null, accuracy: null
+      });
+      const clockOutIST = response.data.clock_out_ist || response.data.clock_out;
+      setAttendance(prev => ({
+        ...prev,
+        clock_out: clockOutIST,
+        clock_out_display: formatTimeIST(clockOutIST),
+        total_hours_display: response.data.total_hours_display,
+        status: response.data.status
+      }));
+      setActiveSession(null);
+      clearSession();
+      setHasClockedOutToday(true);
+      setMessage({ type: 'success', text: response.data.message || 'Clocked out successfully!' });
+    } catch (error) {
+      setMessage({ type: 'danger', text: error.response?.data?.message || 'Failed to clock out' });
+    } finally {
+      setClockLoading(false);
+    }
+  };
+
+  const renderClockButton = () => {
+    const hasOpenSession = !!activeSession || (!!attendance?.clock_in && !attendance?.clock_out);
+
+    if (hasOpenSession) {
+      return (
+        <Button
+          variant="warning"
+          size="sm"
+          className="d-flex align-items-center gap-2 px-3 py-2 rounded-pill fw-semibold shadow-sm"
+          onClick={handleClockOut}
+          disabled={clockLoading}
+        >
+          {clockLoading
+            ? <><Spinner size="sm" animation="border" /> Processing...</>
+            : <><FaSignOutAlt size={14} /> Clock Out</>}
+        </Button>
+      );
+    }
+    return (
+      <Button
+        variant="success"
+        size="sm"
+        className="d-flex align-items-center gap-2 px-3 py-2 rounded-pill fw-semibold shadow-sm"
+        onClick={handleClockIn}
+        disabled={clockLoading}
+      >
+        {clockLoading
+          ? <><Spinner size="sm" animation="border" /> Processing...</>
+          : <><FaSignInAlt size={14} /> Clock In</>}
+      </Button>
+    );
+  };
+
+  const getLocationBadge = () => {
+    return (
+      <Badge bg="info" className="px-3 py-2 rounded-pill">
+        <FaLocationArrow className="me-2" size={12} />
+        Location Tracking Disabled
+      </Badge>
+    );
+  };
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,6 +258,8 @@ const EmployeeDashboard = () => {
     is_eligible: false
   });
   const [compOffHistory, setCompOffHistory] = useState([]);
+    const [geofenceInfo, setGeofenceInfo] = useState(null);
+  
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [todayAttendance, setTodayAttendance] = useState(null);
   const [attendanceHistory, setAttendanceHistory] = useState([]);
@@ -406,11 +585,36 @@ const EmployeeDashboard = () => {
 
   const fetchTodayAttendance = async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const url = `${API_ENDPOINTS.ATTENDANCE_EMPLOYEE_REPORT(user.employeeId, today, today)}`;
-      const response = await axios.get(url);
-      if (response.data.attendance && response.data.attendance.length > 0) {
-        setTodayAttendance(response.data.attendance[0]);
+      const response = await axios.get(API_ENDPOINTS.ATTENDANCE_TODAY(user.employeeId));
+      let attendanceData = response.data.attendance;
+      const serverSession = response.data.active_session;
+
+      if (attendanceData) {
+        attendanceData.clock_in = attendanceData.clock_in_ist || attendanceData.clock_in;
+        attendanceData.clock_out = attendanceData.clock_out_ist || attendanceData.clock_out;
+        if (attendanceData.clock_in) attendanceData.clock_in_display = formatTimeIST(attendanceData.clock_in);
+        if (attendanceData.clock_out) attendanceData.clock_out_display = formatTimeIST(attendanceData.clock_out);
+        attendanceData.late_minutes = Number(attendanceData.late_minutes) || 0;
+
+        setAttendance(attendanceData);
+        setTodayAttendance(attendanceData);
+
+        if (serverSession) {
+          setActiveSession(serverSession);
+          saveSession(serverSession);
+          setHasClockedOutToday(false);
+        } else if (attendanceData.clock_in && !attendanceData.clock_out) {
+          setActiveSession({ session_id: attendanceData.session_id || 'inferred' });
+          setHasClockedOutToday(false);
+        } else {
+          setActiveSession(null);
+          clearSession();
+          if (attendanceData.clock_out) setHasClockedOutToday(true);
+        }
+      } else {
+        setAttendance(null);
+        setTodayAttendance(null);
+        if (!serverSession) { setActiveSession(null); clearSession(); }
       }
     } catch (error) {
       console.error('Error fetching today attendance:', error);
@@ -630,8 +834,94 @@ const EmployeeDashboard = () => {
   }
 
   return (
-    <div className="p-2 p-md-3 p-lg-4" style={{ backgroundColor: '#f8f9fc', minHeight: '100vh' }}>
-      {/* Welcome Header */}
+    <div className="p-2 p-md-3 p-lg-4" style={{ backgroundColor: '#f0f2f5', minHeight: '100vh' }}>
+
+      {/* Main Attendance Card - Attractive Gradient */}
+      <Card className="mb-4 border-0 shadow overflow-hidden" style={{ borderRadius: '16px' }}>
+        <div style={{ background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)', padding: '1px', borderRadius: '16px' }}>
+          <Card.Body className="p-3 p-md-4" style={{ background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)', borderRadius: '15px' }}>
+            <Row className="align-items-center g-3">
+              {/* Location */}
+              <Col xs={12} md={3}>
+                <div className="d-flex flex-column align-items-center align-items-md-start">
+                  <small className="text-white-50 mb-1" style={{ fontSize: '11px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Location Status</small>
+                  {getLocationBadge()}
+                  {geofenceInfo && (
+                    <small className="text-white-50 mt-1" style={{ fontSize: '10px' }}>
+                      <FaMapMarkerAlt className="me-1" size={9} />
+                      Accuracy: ±{Math.round(0)}m
+                    </small>
+                  )}
+                </div>
+              </Col>
+
+              {/* Live Clock */}
+              <Col xs={6} md={3}>
+                <div className="text-center">
+                  <small className="text-white-50 d-block mb-1" style={{ fontSize: '11px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Live Time</small>
+                  <div className="text-white fw-bold" style={{ fontSize: '22px', fontVariantNumeric: 'tabular-nums', letterSpacing: '1px' }}>
+                    {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                  <small className="text-white-50" style={{ fontSize: '10px' }}>
+                    {currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </small>
+                </div>
+              </Col>
+
+              {/* Clock In / Out Times */}
+              <Col xs={6} md={3}>
+                <div className="d-flex gap-3 justify-content-center">
+                  <div className="text-center">
+                    <small className="text-white d-block mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>In</small>
+                    <div className={`text-white fw-bold ${attendance?.clock_in ? 'text-success' : 'text-white'}`} style={{ fontSize: '15px' }}>
+                      {attendance?.clock_in
+                        ? (attendance.clock_in_display || formatTimeIST(attendance.clock_in_ist || attendance.clock_in))
+                        : '--:--'}
+                    </div>
+                    {attendance?.late_display && attendance?.late_minutes > 0 && (
+                      <small className="text-danger d-block" style={{ fontSize: '9px' }}>
+                        <FaExclamationTriangle size={7} className="me-1" />
+                        Late {attendance.late_display}
+                      </small>
+                    )}
+                  </div>
+                  <div style={{ width: '1px', background: 'rgba(244, 244, 244, 0.15)', margin: '4px 0' }} />
+                  <div className="text-center">
+                    <small className="text-white d-block mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Out</small>
+                    <div className={`text-white fw-bold ${attendance?.clock_out ? 'text-warning' : 'text-white'}`} style={{ fontSize: '15px' }}>
+                      {attendance?.clock_out
+                        ? (attendance.clock_out_display || formatTimeIST(attendance.clock_out_ist || attendance.clock_out))
+                        : '--:--'}
+                    </div>
+                    {attendance?.total_hours_display && (
+                      <small className=" text-white text-success d-block" style={{ fontSize: '9px' }}>{attendance.total_hours_display}</small>
+                    )}
+                  </div>
+                </div>
+              </Col>
+
+              {/* Action Button */}
+              <Col xs={12} md={3}>
+                <div className="d-flex justify-content-center justify-content-md-end">
+                  {renderClockButton()}
+                </div>
+              </Col>
+            </Row>
+
+            {geofenceInfo && !geofenceInfo.isInOffice && !activeSession && (
+              <div className="mt-3 text-warning small text-center" style={{ background: 'rgba(255,193,7,0.1)', borderRadius: '8px', padding: '8px' }}>
+                <FaExclamationTriangle className="me-1" />
+                You are {geofenceInfo.distance}m away. Need to be within {OFFICE_COORDS.radius}m to clock in.
+              </div>
+            )}
+            {message.text && (
+              <Alert variant={message.type} onClose={() => setMessage({ type: '', text: '' })} dismissible className="mt-3 mb-0 py-2 small">
+                {message.text}
+              </Alert>
+            )}
+          </Card.Body>
+        </div>
+      </Card>
       <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-4 gap-3">
         <div>
           <h5 className="mb-1 d-flex align-items-center">

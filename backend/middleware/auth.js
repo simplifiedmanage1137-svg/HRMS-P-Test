@@ -5,7 +5,7 @@ const verifyToken = (req, res, next) => {
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-        return res.status(401).json({ success: false, message: 'Access token required' });
+        return res.status(401).json({ success: false, message: 'Access token required', code: 'NO_TOKEN' });
     }
 
     jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
@@ -13,7 +13,7 @@ const verifyToken = (req, res, next) => {
             if (err.name === 'TokenExpiredError') {
                 return res.status(401).json({ success: false, message: 'Token expired', code: 'TOKEN_EXPIRED' });
             }
-            return res.status(401).json({ success: false, message: 'Invalid token' });
+            return res.status(401).json({ success: false, message: 'Invalid token', code: 'INVALID_TOKEN' });
         }
 
         req.user = {
@@ -22,7 +22,6 @@ const verifyToken = (req, res, next) => {
             role: decoded.role,
             email: decoded.email
         };
-
         next();
     });
 };
@@ -37,8 +36,7 @@ const isAdmin = (req, res, next) => {
 const isOwnDataOrAdmin = (req, res, next) => {
     const userRole = req.user?.role;
     const userEmployeeId = req.user?.employeeId;
-
-    let requestedEmployeeId = req.params.employee_id || req.body.employee_id || req.query.employee_id;
+    const requestedEmployeeId = req.params.employee_id || req.body.employee_id || req.query.employee_id;
 
     if (userRole === 'admin') return next();
     if (userEmployeeId === requestedEmployeeId) return next();

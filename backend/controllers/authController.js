@@ -46,7 +46,7 @@ exports.login = async (req, res) => {
         const token = jwt.sign(
             { id: employee.id, email: employee.email, role, employeeId: employee.employee_id },
             process.env.JWT_SECRET || 'your_secret_key',
-            { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
+            { expiresIn: process.env.JWT_EXPIRES_IN || '72h' }
         );
 
         return res.json({
@@ -238,7 +238,7 @@ exports.forgotPassword = async (req, res) => {
         const resetToken = jwt.sign(
             { email },
             process.env.JWT_SECRET || 'your_secret_key',
-            { expiresIn: '1h' }
+            { expiresIn: '36h' }
         );
 
         // Here you would typically send an email with the reset link

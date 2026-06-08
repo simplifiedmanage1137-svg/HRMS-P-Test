@@ -252,6 +252,19 @@ const nowIST = () => {
     return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
 };
 
+// Clock-in IST: subtract 5 minutes from the actual clock-in time
+const clockInIST = () => {
+    const now = new Date();
+    const istMs = now.getTime() + IST_OFFSET_MS - (5 * 60 * 1000);
+    const ist = new Date(istMs);
+    const y = ist.getUTCFullYear();
+    const mo = String(ist.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(ist.getUTCDate()).padStart(2, '0');
+    const h = String(ist.getUTCHours()).padStart(2, '0');
+    const mi = String(ist.getUTCMinutes()).padStart(2, '0');
+    return `${y}-${mo}-${d} ${h}:${mi}:00`;
+};
+
 // Parse any time value → UTC ms (safe for diff calculations)
 const toUTCMs = (val) => {
     if (!val) return null;
@@ -645,9 +658,9 @@ exports.clockIn = async (req, res) => {
         const sessionId = generateSessionId();
         const holidayCheck = isHoliday(now);
 
-        // IST time string for clock-in
-        const clockInIST = nowIST();
-        const istDateForAttendance = clockInIST.split(' ')[0];
+        // IST time string for clock-in — rounded DOWN to nearest 5 minutes
+        const clockInISTValue = clockInIST();
+        const istDateForAttendance = clockInISTValue.split(' ')[0];
         const today = istDateForAttendance;
 
         // ✅ ENHANCED: Better shift timing parsing with fallback
@@ -716,7 +729,7 @@ exports.clockIn = async (req, res) => {
 
         // Late calculation using IST-aware UTC ms diff
         const shiftStartIST = `${istDateForAttendance} ${String(shiftHour).padStart(2, '0')}:${String(shiftMinute).padStart(2, '0')}:00`;
-        const clockInMs = toUTCMs(clockInIST);
+        const clockInMs = toUTCMs(clockInISTValue);
         const shiftStartMs = toUTCMs(shiftStartIST);
         const diffMs = clockInMs - shiftStartMs;
         const isLate = diffMs > 0;
@@ -768,7 +781,7 @@ exports.clockIn = async (req, res) => {
             employee_id,
             attendance_date: istDateForAttendance,
             clock_in: now.toISOString(),
-            clock_in_ist: clockInIST,
+            clock_in_ist: clockInISTValue,
             late_minutes: lateMinutesToSave,
             early_minutes: earlyMinutesToSave,
             latitude: latitude || null,
@@ -828,7 +841,7 @@ exports.clockIn = async (req, res) => {
             success: true,
             message,
             clock_in: now,
-            clock_in_ist: clockInIST,
+            clock_in_ist: clockInISTValue,
             shift_time: shiftDisplay,
             shift_start: `${shiftHour.toString().padStart(2, '0')}:${shiftMinute.toString().padStart(2, '0')}`,
             is_late: isLate,

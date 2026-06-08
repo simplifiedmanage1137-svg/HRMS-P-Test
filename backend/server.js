@@ -172,23 +172,26 @@ const authenticateToken = (req, res, next) => {
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-        return res.status(401).json({ 
+        return res.status(401).json({
             success: false,
-            message: 'Access token required' 
+            message: 'Access token required',
+            code: 'NO_TOKEN'
         });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret_key_here', (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
             if (err.name === 'TokenExpiredError') {
-                return res.status(401).json({ 
+                return res.status(401).json({
                     success: false,
-                    message: 'Token expired' 
+                    message: 'Token expired',
+                    code: 'TOKEN_EXPIRED'
                 });
             }
-            return res.status(403).json({ 
+            return res.status(401).json({
                 success: false,
-                message: 'Invalid or expired token' 
+                message: 'Invalid token',
+                code: 'INVALID_TOKEN'
             });
         }
         req.user = user;

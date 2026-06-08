@@ -190,14 +190,14 @@ router.post('/refresh', async (req, res) => {
 router.post('/verify', async (req, res) => {
     try {
         const token = req.headers['authorization']?.split(' ')[1];
-        if (!token) return res.status(401).json({ success: false, message: 'No token provided' });
+        if (!token) return res.status(401).json({ success: false, message: 'No token provided', code: 'NO_TOKEN' });
 
         let decoded;
         try {
             decoded = jwt.verify(token, JWT_SECRET);
         } catch (err) {
             if (err.name === 'TokenExpiredError') return res.status(401).json({ success: false, message: 'Token expired', code: 'TOKEN_EXPIRED' });
-            return res.status(401).json({ success: false, message: 'Invalid token' });
+            return res.status(401).json({ success: false, message: 'Invalid token', code: 'INVALID_TOKEN' });
         }
 
         if (decoded.employeeId === 'HR001') {
@@ -206,7 +206,7 @@ router.post('/verify', async (req, res) => {
 
         const { data: user, error } = await supabase.from('employees').select('id, email, role, employee_id, first_name, last_name, department, designation, profile_image, is_active').eq('id', decoded.id).maybeSingle();
 
-        if (error || !user) return res.status(401).json({ success: false, message: 'User not found' });
+        if (error || !user) return res.status(401).json({ success: false, message: 'User not found', code: 'USER_NOT_FOUND' });
         if (user.is_active === false) return res.status(403).json({ success: false, message: 'Account deactivated' });
 
         res.json({
@@ -319,7 +319,7 @@ router.post('/forgot-password', async (req, res) => {
         // Always return same message for security
         if (!user) return res.json({ success: true, message: 'If your email exists, you will receive a reset link' });
 
-        const resetToken = jwt.sign({ id: user.id, email: user.email, purpose: 'password_reset' }, JWT_SECRET, { expiresIn: '1h' });
+        const resetToken = jwt.sign({ id: user.id, email: user.email, purpose: 'password_reset' }, JWT_SECRET, { expiresIn: '36h' });
         console.log('📧 Password reset token for', email, ':', resetToken);
 
         res.json({

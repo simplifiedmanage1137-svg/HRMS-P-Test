@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Abril+Fatface&family=Bebas+Neue&family=Righteous&family=Permanent+Marker&family=Pacifico&family=Satisfy&family=Press+Start+2P&family=Orbitron:wght@400;700&display=swap');
+
 /* ============================================================
    HRMS ENTERPRISE DESIGN SYSTEM
    Primary BG   : #F8FAFC  (cool gray)
@@ -9,7 +11,6 @@
    Text Secondary: #64748B
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
   /* ── Core Palette ── */
@@ -868,7 +869,6 @@ html, body, #root {
 }
 
 /* ── Notice Board Font Imports ── */
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Abril+Fatface&family=Bebas+Neue&family=Righteous&family=Permanent+Marker&family=Pacifico&family=Satisfy&family=Press+Start+2P&family=Orbitron:wght@400;700&display=swap');
 
 /* Notice font family classes */
 .notice-font-inter           { font-family: 'Inter', sans-serif; }
