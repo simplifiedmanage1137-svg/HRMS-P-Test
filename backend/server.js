@@ -122,10 +122,9 @@ const corsOptions = {
 // Apply CORS before EVERYTHING else so preflight OPTIONS responses are
 // handled immediately and always carry the correct headers.
 app.use(cors(corsOptions));
-
+app.options('*', cors(corsOptions));
 // Explicitly handle OPTIONS preflight for every route so nothing slips
 // through if a route handler accidentally swallows the request.
-app.options('*', cors(corsOptions));
 
 // ─── Body parsers ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
