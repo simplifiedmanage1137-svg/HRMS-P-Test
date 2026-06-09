@@ -1423,8 +1423,10 @@ const AdminDashboard = () => {
     labels: ['Present', 'Absent', 'On Leave', 'Half Day', 'Late'],
     datasets: [{
       data: [stats.present, stats.absent, stats.onLeave, stats.halfDay, stats.late],
-      backgroundColor: ['#28a745', '#dc3545', '#6f42c1', '#ffc107', '#fd7e14'],
-      borderWidth: 0
+      backgroundColor: ['#22c55e', '#ef4444', '#8b5cf6', '#f97316', '#f59e0b'],
+      borderWidth: 3,
+      borderColor: '#ffffff',
+      hoverOffset: 8
     }]
   };
 
@@ -1944,27 +1946,189 @@ const AdminDashboard = () => {
 
           {/* Charts Row */}
           <Row className="mb-4 g-3">
+            {/* Attendance Distribution */}
             <Col xs={12} md={6}>
-              <Card className="border-0 shadow-sm h-100">
-                <Card.Header className="bg-white">
-                  <h6 className="mb-0">Attendance Distribution</h6>
-                </Card.Header>
-                <Card.Body className="d-flex justify-content-center">
-                  <div style={{ width: '250px', height: '250px' }}>
-                    <Doughnut data={attendanceChartData} options={{ maintainAspectRatio: true, responsive: true, plugins: { legend: { position: 'bottom' } } }} />
+              <Card className="border-0 h-100" style={{ borderRadius: '14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+                <Card.Header className="bg-white border-0 pt-3 pb-2 px-3" style={{ borderRadius: '14px 14px 0 0' }}>
+                  <div className="d-flex align-items-center gap-2">
+                    <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(34,197,94,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <FaUserCheck size={15} color="#22c55e" />
+                    </div>
+                    <div>
+                      <div className="fw-bold" style={{ fontSize: 14, color: '#111827' }}>Attendance Distribution</div>
+                      <div style={{ fontSize: 11, color: '#9ca3af' }}>Today’s attendance breakdown</div>
+                    </div>
                   </div>
+                </Card.Header>
+                <Card.Body className="p-3 pt-1">
+                  {(() => {
+                    const total = stats.present + stats.absent + stats.onLeave + stats.halfDay + stats.late;
+                    const segments = [
+                      { label: 'Present',   value: stats.present,  color: '#22c55e' },
+                      { label: 'Absent',    value: stats.absent,   color: '#ef4444' },
+                      { label: 'On Leave',  value: stats.onLeave,  color: '#8b5cf6' },
+                      { label: 'Half Day',  value: stats.halfDay,  color: '#f97316' },
+                      { label: 'Late',      value: stats.late,     color: '#f59e0b' },
+                    ];
+                    const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(0) : 0;
+                    return (
+                      <div className="d-flex flex-column flex-sm-row align-items-center gap-3">
+                        <div style={{ width: 180, height: 180, flexShrink: 0, margin: '0 auto' }}>
+                          <Doughnut
+                            data={attendanceChartData}
+                            options={{
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              animation: { duration: 700, easing: 'easeInOutQuart' },
+                              cutout: '52%',
+                              plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                  backgroundColor: 'rgba(17,24,39,0.92)',
+                                  titleColor: '#f9fafb',
+                                  bodyColor: '#d1d5db',
+                                  padding: 10,
+                                  cornerRadius: 8,
+                                  callbacks: {
+                                    label: (ctx) => total > 0
+                                      ? ` ${ctx.raw} employees (${((ctx.raw/total)*100).toFixed(0)}%)`
+                                      : ' No data'
+                                  }
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                        <div className="flex-grow-1 w-100">
+                          {segments.map(seg => (
+                            <div key={seg.label} className="mb-2">
+                              <div className="d-flex justify-content-between align-items-center mb-1">
+                                <div className="d-flex align-items-center gap-1">
+                                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: seg.color, display: 'inline-block', flexShrink: 0 }} />
+                                  <span style={{ fontSize: 12, color: '#374151', fontWeight: 500 }}>{seg.label}</span>
+                                </div>
+                                <div className="d-flex align-items-center gap-2">
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: seg.color }}>{seg.value}</span>
+                                  <span style={{ fontSize: 11, color: '#9ca3af', background: '#f3f4f6', borderRadius: 10, padding: '1px 6px' }}>{pct(seg.value)}%</span>
+                                </div>
+                              </div>
+                              <div style={{ height: 5, borderRadius: 99, background: '#f3f4f6', overflow: 'hidden' }}>
+                                <div style={{
+                                  height: '100%', borderRadius: 99, background: seg.color,
+                                  width: `${Math.max(parseFloat(pct(seg.value)), seg.value > 0 ? 3 : 0)}%`,
+                                  transition: 'width 0.7s ease'
+                                }} />
+                              </div>
+                            </div>
+                          ))}
+                          <div className="mt-2 pt-2" style={{ borderTop: '1px solid #f3f4f6' }}>
+                            <span style={{ fontSize: 11, color: '#6b7280' }}>Total employees tracked: </span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{totalEmployees}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </Card.Body>
               </Card>
             </Col>
+
+            {/* Department Distribution */}
             <Col xs={12} md={6}>
-              <Card className="border-0 shadow-sm h-100">
-                <Card.Header className="bg-white">
-                  <h6 className="mb-0">Department Distribution</h6>
-                </Card.Header>
-                <Card.Body className="d-flex justify-content-center">
-                  <div style={{ width: '250px', height: '250px' }}>
-                    <Doughnut data={departmentChartData} options={{ maintainAspectRatio: true, responsive: true, plugins: { legend: { position: 'bottom' } } }} />
+              <Card className="border-0 h-100" style={{ borderRadius: '14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+                <Card.Header className="bg-white border-0 pt-3 pb-2 px-3" style={{ borderRadius: '14px 14px 0 0' }}>
+                  <div className="d-flex align-items-center gap-2">
+                    <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <FaBuilding size={15} color="#6366f1" />
+                    </div>
+                    <div>
+                      <div className="fw-bold" style={{ fontSize: 14, color: '#111827' }}>Department Distribution</div>
+                      <div style={{ fontSize: 11, color: '#9ca3af' }}>Employees per department</div>
+                    </div>
                   </div>
+                </Card.Header>
+                <Card.Body className="p-3 pt-1">
+                  {(() => {
+                    const DEPT_COLORS = ['#6366f1','#22c55e','#f97316','#ef4444','#f59e0b','#8b5cf6','#06b6d4','#ec4899'];
+                    const labels = departmentChartData.labels || [];
+                    const values = departmentChartData.datasets[0]?.data || [];
+                    const deptTotal = values.reduce((s, v) => s + v, 0);
+                    const pct = (v) => deptTotal > 0 ? ((v / deptTotal) * 100).toFixed(0) : 0;
+
+                    const coloredData = {
+                      labels,
+                      datasets: [{
+                        data: values,
+                        backgroundColor: labels.map((_, i) => DEPT_COLORS[i % DEPT_COLORS.length]),
+                        borderWidth: 3,
+                        borderColor: '#ffffff',
+                        hoverOffset: 8
+                      }]
+                    };
+
+                    return (
+                      <div className="d-flex flex-column flex-sm-row align-items-center gap-3">
+                        <div style={{ width: 180, height: 180, flexShrink: 0, margin: '0 auto' }}>
+                          <Doughnut
+                            data={coloredData}
+                            options={{
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              animation: { duration: 700, easing: 'easeInOutQuart' },
+                              cutout: '52%',
+                              plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                  backgroundColor: 'rgba(17,24,39,0.92)',
+                                  titleColor: '#f9fafb',
+                                  bodyColor: '#d1d5db',
+                                  padding: 10,
+                                  cornerRadius: 8,
+                                  callbacks: {
+                                    label: (ctx) => deptTotal > 0
+                                      ? ` ${ctx.raw} employees (${((ctx.raw/deptTotal)*100).toFixed(0)}%)`
+                                      : ' No data'
+                                  }
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                        <div className="flex-grow-1 w-100" style={{ maxHeight: 220, overflowY: labels.length > 5 ? 'auto' : 'visible' }}>
+                          {labels.length === 0 ? (
+                            <p style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', marginTop: 40 }}>No department data</p>
+                          ) : labels.map((dept, i) => (
+                            <div key={dept} className="mb-2">
+                              <div className="d-flex justify-content-between align-items-center mb-1">
+                                <div className="d-flex align-items-center gap-1">
+                                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: DEPT_COLORS[i % DEPT_COLORS.length], display: 'inline-block', flexShrink: 0 }} />
+                                  <span style={{ fontSize: 12, color: '#374151', fontWeight: 500 }} className="text-truncate" title={dept}>{dept}</span>
+                                </div>
+                                <div className="d-flex align-items-center gap-2">
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: DEPT_COLORS[i % DEPT_COLORS.length] }}>{values[i]}</span>
+                                  <span style={{ fontSize: 11, color: '#9ca3af', background: '#f3f4f6', borderRadius: 10, padding: '1px 6px' }}>{pct(values[i])}%</span>
+                                </div>
+                              </div>
+                              <div style={{ height: 5, borderRadius: 99, background: '#f3f4f6', overflow: 'hidden' }}>
+                                <div style={{
+                                  height: '100%', borderRadius: 99,
+                                  background: DEPT_COLORS[i % DEPT_COLORS.length],
+                                  width: `${Math.max(parseFloat(pct(values[i])), values[i] > 0 ? 3 : 0)}%`,
+                                  transition: 'width 0.7s ease'
+                                }} />
+                              </div>
+                            </div>
+                          ))}
+                          {labels.length > 0 && (
+                            <div className="mt-2 pt-2" style={{ borderTop: '1px solid #f3f4f6' }}>
+                              <span style={{ fontSize: 11, color: '#6b7280' }}>Total employees: </span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{deptTotal}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </Card.Body>
               </Card>
             </Col>

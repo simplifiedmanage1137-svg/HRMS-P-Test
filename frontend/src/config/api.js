@@ -174,6 +174,9 @@ export const API_ENDPOINTS = {
   SHIFTS:       ep('/api/shifts'),
   SHIFT_BY_ID:  (id) => ep(`/api/shifts/${id}`),
 
+  // Contact
+  CONTACT: ep('/api/contact'),
+
   // Geofence
   GEOFENCE_LIST:   ep('/api/geofence/list'),
   GEOFENCE_CREATE: ep('/api/geofence'),

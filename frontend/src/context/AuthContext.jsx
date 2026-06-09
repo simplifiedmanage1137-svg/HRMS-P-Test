@@ -107,9 +107,9 @@ export const AuthProvider = ({ children }) => {
 
   // ─── login ──────────────────────────────────────────────────────────────────
 
-  const login = async (email, password) => {
+  const login = async (identifier, password) => {
     try {
-      const response = await axiosInstance.post(API_ENDPOINTS.LOGIN, { email, password });
+      const response = await axiosInstance.post(API_ENDPOINTS.LOGIN, { identifier, password });
 
       if (!response.data.success) {
         return { success: false, message: response.data.message || 'Login failed' };

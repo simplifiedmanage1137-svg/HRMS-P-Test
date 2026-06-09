@@ -51,3 +51,6 @@
 {"timestamp":"2026-06-01T18:29:17.946Z","type":"END_OF_DAY","message":"Marked 42 absent, 15 half_day","duration":17882,"environment":"development"}
 {"timestamp":"2026-06-02T09:30:00.977Z","type":"AUTO_CLOSE","message":"1 sessions closed","duration":955,"environment":"development"}
 {"timestamp":"2026-06-05T12:30:01.953Z","type":"AUTO_CLOSE","message":"1 sessions closed","duration":1935,"environment":"development"}
+{"timestamp":"2026-06-08T15:30:00.514Z","type":"AUTO_CLOSE","message":"0 sessions closed","duration":486}
+{"timestamp":"2026-06-08T16:30:00.787Z","type":"AUTO_CLOSE","message":"0 sessions closed","duration":758}
+{"timestamp":"2026-06-08T17:30:00.755Z","type":"AUTO_CLOSE","message":"0 sessions closed","duration":734}

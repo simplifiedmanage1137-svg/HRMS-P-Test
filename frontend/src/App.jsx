@@ -174,7 +174,7 @@ function AppContent() {
               </PrivateRoute>
             } />
 
-            <Route path="/admin/employees/:id" element={
+            <Route path="/admin/employees/:employeeId" element={
               <PrivateRoute allowedRoles={['admin']}>
                 <EmployeeProfileView />
               </PrivateRoute>

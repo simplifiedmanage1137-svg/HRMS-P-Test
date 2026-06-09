@@ -4,22 +4,26 @@ const jwt = require('jsonwebtoken');
 
 exports.login = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { identifier, email, password } = req.body;
+        const loginId = (identifier || email || '').trim();
 
-        if (!email || !password) {
-            return res.status(400).json({ success: false, message: 'Email and password are required' });
+        if (!loginId || !password) {
+            return res.status(400).json({ success: false, message: 'Employee ID / Email and password are required' });
         }
 
-        // Get employee from database by email
+        // Detect whether the input looks like an email address
+        const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginId);
+
+        // Query by email OR employee_id depending on what was entered
         const { data: employees, error: empError } = await supabase
             .from('employees')
             .select('*')
-            .eq('email', email.toLowerCase().trim());
+            .eq(isEmail ? 'email' : 'employee_id', isEmail ? loginId.toLowerCase() : loginId);
 
         if (empError) throw empError;
 
         if (!employees || employees.length === 0) {
-            return res.status(401).json({ success: false, message: 'Invalid email or password' });
+            return res.status(401).json({ success: false, message: 'Invalid credentials' });
         }
 
         const employee = employees[0];
@@ -38,7 +42,7 @@ exports.login = async (req, res) => {
         }
 
         if (!isPasswordValid) {
-            return res.status(401).json({ success: false, message: 'Invalid email or password' });
+            return res.status(401).json({ success: false, message: 'Invalid credentials' });
         }
 
         const role = employee.role || 'employee';

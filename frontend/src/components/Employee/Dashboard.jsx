@@ -1,6 +1,6 @@
 // src/components/Employee/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Table, Badge, Spinner, Alert, Button, ProgressBar, Modal, ButtonGroup } from 'react-bootstrap';
+import { Row, Col, Card, Table, Badge, Spinner, Alert, Button, Modal, ButtonGroup } from 'react-bootstrap';
 import {
   FaUserCircle,
   FaCalendarAlt,
@@ -287,48 +287,48 @@ const EmployeeDashboard = () => {
   const [showRatingHistory, setShowRatingHistory] = useState(false);
   const [activeRatingTab, setActiveRatingTab] = useState('manager');
 
-  // Chart data
+  // Chart view toggle: 'weekly' | 'monthly'
+  const [chartView, setChartView] = useState('weekly');
+
+  // Weekly chart data
   const [attendanceChartData, setAttendanceChartData] = useState({
     labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    datasets: [
-      {
-        label: 'Hours Worked',
-        data: [0, 0, 0, 0, 0, 0, 0],
-        backgroundColor: [
-          'rgba(54, 162, 235, 0.6)',
-          'rgba(54, 162, 235, 0.6)',
-          'rgba(54, 162, 235, 0.6)',
-          'rgba(54, 162, 235, 0.6)',
-          'rgba(54, 162, 235, 0.6)',
-          'rgba(169, 169, 169, 0.6)',
-          'rgba(169, 169, 169, 0.6)'
-        ],
-        borderColor: [
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(128, 128, 128)',
-          'rgb(128, 128, 128)'
-        ],
-        borderWidth: 1,
-        borderRadius: 5,
-        barPercentage: 0.7,
-        categoryPercentage: 0.8
-      }
-    ]
+    datasets: [{
+      label: 'Present Days',
+      data: [0, 0, 0, 0, 0, 0, 0],
+      backgroundColor: Array(5).fill('rgba(59,130,246,0.75)').concat(Array(2).fill('rgba(156,163,175,0.45)')),
+      borderColor:      Array(5).fill('rgb(59,130,246)').concat(Array(2).fill('rgb(156,163,175)')),
+      borderWidth: 0,
+      borderRadius: 6,
+      barPercentage: 0.6,
+      categoryPercentage: 0.75
+    }]
+  });
+
+  // Monthly chart data (Jan–Dec, hours per month)
+  const [monthlyChartData, setMonthlyChartData] = useState({
+    labels: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+    datasets: [{
+      label: 'Total Working Hours',
+      data: Array(12).fill(0),
+      backgroundColor: 'rgba(99,102,241,0.75)',
+      borderColor: 'rgb(99,102,241)',
+      borderWidth: 0,
+      borderRadius: 6,
+      barPercentage: 0.6,
+      categoryPercentage: 0.75
+    }]
   });
 
   const [leaveChartData, setLeaveChartData] = useState({
-    labels: ['Used', 'Available', 'Pending'],
-    datasets: [
-      {
-        data: [0, 12, 0],
-        backgroundColor: ['#dc3545', '#28a745', '#ffc107'],
-        borderWidth: 0
-      }
-    ]
+    labels: ['Leave Used', 'Remaining Leaves', 'Pending Approval'],
+    datasets: [{
+      data: [0, 12, 0],
+      backgroundColor: ['#ef4444', '#22c55e', '#f97316'],
+      borderWidth: 3,
+      borderColor: '#ffffff',
+      hoverOffset: 8
+    }]
   });
 
   // Weekly off days (0 = Sunday, 6 = Saturday)
@@ -688,78 +688,76 @@ const EmployeeDashboard = () => {
   };
 
   const updateAttendanceChart = () => {
-    const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // ── Weekly view ──────────────────────────────────────────────
     const hoursByDay = [0, 0, 0, 0, 0, 0, 0];
-
     const today = new Date();
-    const dayOfWeek = today.getDay();
+    const dow = today.getDay();
     const monday = new Date(today);
-    monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+    monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
     monday.setHours(0, 0, 0, 0);
 
     attendanceHistory.forEach(record => {
       if (!record.clock_in) return;
       const recDate = new Date(record.attendance_date);
       recDate.setHours(0, 0, 0, 0);
-      const diffDays = Math.round((recDate - monday) / (1000 * 60 * 60 * 24));
-      if (diffDays >= 0 && diffDays <= 6) {
-        const hours = parseFloat(record.total_hours) || 0;
-        hoursByDay[diffDays] = Math.round(hours * 10) / 10;
+      const diff = Math.round((recDate - monday) / 86400000);
+      if (diff >= 0 && diff <= 6) {
+        hoursByDay[diff] = Math.round((parseFloat(record.total_hours) || 0) * 10) / 10;
       }
     });
 
     setAttendanceChartData({
-      labels: daysOfWeek,
+      labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       datasets: [{
-        label: 'Hours Worked',
+        label: 'Present Days',
         data: hoursByDay,
-        backgroundColor: [
-          'rgba(54, 162, 235, 0.7)',
-          'rgba(54, 162, 235, 0.7)',
-          'rgba(54, 162, 235, 0.7)',
-          'rgba(54, 162, 235, 0.7)',
-          'rgba(54, 162, 235, 0.7)',
-          'rgba(169, 169, 169, 0.5)',
-          'rgba(169, 169, 169, 0.5)'
-        ],
-        borderColor: [
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(54, 162, 235)',
-          'rgb(128, 128, 128)',
-          'rgb(128, 128, 128)'
-        ],
-        borderWidth: 1,
-        borderRadius: 5,
-        barPercentage: 0.7,
-        categoryPercentage: 0.8
+        backgroundColor: Array(5).fill('rgba(59,130,246,0.75)').concat(Array(2).fill('rgba(156,163,175,0.45)')),
+        borderColor:      Array(5).fill('rgb(59,130,246)').concat(Array(2).fill('rgb(156,163,175)')),
+        borderWidth: 0,
+        borderRadius: 6,
+        barPercentage: 0.6,
+        categoryPercentage: 0.75
+      }]
+    });
+
+    // ── Monthly view (Jan–Dec, total hours per calendar month) ────
+    const hoursByMonth = Array(12).fill(0);
+    attendanceHistory.forEach(record => {
+      if (!record.clock_in || !record.total_hours) return;
+      const m = new Date(record.attendance_date).getMonth(); // 0–11
+      hoursByMonth[m] = Math.round((hoursByMonth[m] + (parseFloat(record.total_hours) || 0)) * 10) / 10;
+    });
+
+    setMonthlyChartData({
+      labels: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+      datasets: [{
+        label: 'Total Working Hours',
+        data: hoursByMonth,
+        backgroundColor: 'rgba(99,102,241,0.75)',
+        borderColor: 'rgb(99,102,241)',
+        borderWidth: 0,
+        borderRadius: 6,
+        barPercentage: 0.6,
+        categoryPercentage: 0.75
       }]
     });
   };
 
   const updateLeaveChart = () => {
-    const used = parseFloat(leaveBalance.used) || 0;
-    const pending = parseFloat(leaveBalance.pending) || 0;
-    const totalAccrued = parseFloat(leaveBalance.total_accrued) || 0;
-
-    // Probation mein available = 0 aata hai backend se
-    // To available = total_accrued - used - pending calculate karo
-    const available = Math.max(0, totalAccrued - used - pending);
-    const total = used + available + pending;
-
-    const hasData = total > 0;
+    const used      = parseFloat(leaveBalance.used) || 0;
+    const pending   = parseFloat(leaveBalance.pending) || 0;
+    const total     = parseFloat(leaveBalance.total_accrued) || 0;
+    const available = Math.max(0, total - used - pending);
+    const hasData   = (used + pending + available) > 0;
 
     setLeaveChartData({
-      labels: ['Used', 'Available', 'Pending'],
+      labels: ['Leave Used', 'Remaining Leaves', 'Pending Approval'],
       datasets: [{
         data: hasData ? [used, available, pending] : [1, 1, 1],
-        backgroundColor: hasData
-          ? ['#dc3545', '#28a745', '#ffc107']
-          : ['#e9ecef', '#e9ecef', '#e9ecef'],
-        borderWidth: 0,
-        borderRadius: 2
+        backgroundColor: hasData ? ['#ef4444', '#22c55e', '#f97316'] : ['#e5e7eb', '#e5e7eb', '#e5e7eb'],
+        borderWidth: 3,
+        borderColor: '#ffffff',
+        hoverOffset: 8
       }]
     });
   };
@@ -1247,133 +1245,203 @@ const EmployeeDashboard = () => {
       </Row>
 
       <Row className="g-3 g-md-4">
-        {/* Attendance Bar Chart */}
+        {/* ── Attendance Chart ─────────────────────────────────── */}
         <Col lg={6}>
-          <Card className="border-0 shadow-sm h-100">
-            <Card.Header className="bg-white py-2 py-md-3 d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2">
-              <h6 className="mb-0 small d-flex align-items-center">
-                <FaChartBar className="me-2 text-primary" />
-                Weekly Attendance Summary
-              </h6>
-              <Badge bg="light" text="dark" className="ms-0 ms-sm-auto">This week's hours</Badge>
+          <Card className="border-0 h-100" style={{ borderRadius: '14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+            <Card.Header className="bg-white border-0 pt-3 pb-2 px-3" style={{ borderRadius: '14px 14px 0 0' }}>
+              <div className="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div className="d-flex align-items-center gap-2">
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <FaChartBar size={15} color="#3b82f6" />
+                  </div>
+                  <div>
+                    <div className="fw-bold" style={{ fontSize: 14, color: '#111827' }}>
+                      {chartView === 'weekly' ? 'Weekly Attendance' : 'Monthly Attendance Overview'}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                      {chartView === 'weekly' ? 'Hours worked this week' : 'Total hours per month'}
+                    </div>
+                  </div>
+                </div>
+                {/* Toggle */}
+                <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 8, padding: 3 }}>
+                  {['weekly', 'monthly'].map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setChartView(v)}
+                      style={{
+                        border: 'none', cursor: 'pointer', borderRadius: 6, padding: '4px 12px',
+                        fontSize: 11, fontWeight: 600, transition: 'all 0.2s',
+                        background: chartView === v ? '#3b82f6' : 'transparent',
+                        color: chartView === v ? '#fff' : '#6b7280'
+                      }}
+                    >
+                      {v === 'weekly' ? 'Weekly' : 'Monthly'}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </Card.Header>
-            <Card.Body className="p-2 p-md-3">
-              <div style={{ height: '280px', position: 'relative' }}>
+
+            <Card.Body className="p-3 pt-2">
+              <div style={{ height: 270, position: 'relative' }}>
                 <Bar
-                  data={attendanceChartData}
+                  data={chartView === 'weekly' ? attendanceChartData : monthlyChartData}
                   options={{
                     responsive: true,
                     maintainAspectRatio: false,
+                    animation: { duration: 600, easing: 'easeInOutQuart' },
                     plugins: {
                       legend: { display: false },
                       tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        backgroundColor: 'rgba(17,24,39,0.92)',
+                        titleColor: '#f9fafb',
+                        bodyColor: '#d1d5db',
+                        padding: 10,
+                        cornerRadius: 8,
                         callbacks: {
-                          label: function (context) {
-                            const value = context.raw;
-                            const dayIndex = context.dataIndex;
-                            if (dayIndex === 5 || dayIndex === 6) {
-                              if (value > 0) {
-                                return `  ${value}h (Worked on W-OFF)`;
-                              }
-                              return '  Weekly Off';
+                          label: (ctx) => {
+                            const v = ctx.raw;
+                            if (chartView === 'weekly') {
+                              const i = ctx.dataIndex;
+                              if (i >= 5) return v > 0 ? `  ${v}h (Week Off / Holiday)` : '  Week Off / Holiday';
+                              return `  ${v}h worked`;
                             }
-                            return `  ${value}h`;
+                            return `  ${v}h total`;
                           }
                         }
                       }
                     },
                     scales: {
+                      x: {
+                        grid: { display: false },
+                        ticks: { font: { size: 11 }, color: '#6b7280' }
+                      },
                       y: {
                         beginAtZero: true,
-                        max: 10,
-                        title: { display: true, text: 'Hours', font: { size: 10 } },
-                        ticks: { stepSize: 1, callback: (value) => value + 'h' }
-                      },
-                      x: { ticks: { font: { size: 9 }, maxRotation: 45, minRotation: 45 } }
+                        grid: { color: 'rgba(0,0,0,0.05)', drawBorder: false },
+                        ticks: { font: { size: 10 }, color: '#9ca3af', callback: v => `${v}h` },
+                        title: { display: true, text: 'Hours', font: { size: 10 }, color: '#9ca3af' }
+                      }
                     }
                   }}
                 />
               </div>
-              <div className="mt-3 d-flex flex-wrap justify-content-center align-items-center gap-3 gap-md-4 small">
-                <div className="d-flex align-items-center">
-                  <div style={{ width: '12px', height: '12px', backgroundColor: 'rgba(54, 162, 235, 0.6)', borderRadius: '3px', marginRight: '4px' }}></div>
-                  <span className="text-muted">Working Days</span>
+
+              {/* Legend */}
+              <div className="d-flex flex-wrap justify-content-center gap-3 mt-3" style={{ fontSize: 11 }}>
+                <div className="d-flex align-items-center gap-1">
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: 'rgba(59,130,246,0.75)', display: 'inline-block' }} />
+                  <span style={{ color: '#6b7280' }}>Present Days</span>
                 </div>
-                <div className="d-flex align-items-center">
-                  <div style={{ width: '12px', height: '12px', backgroundColor: 'rgba(169, 169, 169, 0.6)', borderRadius: '3px', marginRight: '4px' }}></div>
-                  <span className="text-muted">W-OFF</span>
-                </div>
+                {chartView === 'weekly' && (
+                  <div className="d-flex align-items-center gap-1">
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: 'rgba(156,163,175,0.45)', display: 'inline-block' }} />
+                    <span style={{ color: '#6b7280' }}>Week Off / Holidays</span>
+                  </div>
+                )}
               </div>
             </Card.Body>
           </Card>
         </Col>
 
-        {/* Leave Distribution Chart */}
+        {/* ── Leave Distribution ───────────────────────────────── */}
         <Col lg={6}>
-          <Card className="border-0 shadow-sm h-100">
-            <Card.Header className="bg-white py-2 py-md-3 d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2">
-              <h6 className="mb-0 small d-flex align-items-center">
-                <FaUmbrellaBeach className="me-2 text-primary" />
-                Leave Distribution
-              </h6>
-              <Badge bg="light" text="dark" className="ms-0 ms-sm-auto">Total: {leaveBalance.total_accrued} days</Badge>
-            </Card.Header>
-            <Card.Body className="p-2 p-md-3">
-              <div className="d-flex flex-column flex-md-row align-items-center" style={{ minHeight: '220px' }}>
-                <div style={{ width: '100%', maxWidth: '250px', height: '200px' }}>
-                  <Doughnut
-                    data={leaveChartData}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      plugins: {
-                        legend: { position: 'bottom', labels: { font: { size: 10 } } },
-                        tooltip: {
-                          callbacks: {
-                            label: (context) => {
-                              const used = parseFloat(leaveBalance.used) || 0;
-                              const available = parseFloat(leaveBalance.available) || 0;
-                              const pending = parseFloat(leaveBalance.pending) || 0;
-                              const total = used + available + pending;
-                              if (total === 0) return ' No data';
-                              return ` ${context.raw} days`;
-                            }
-                          }
-                        }
-                      },
-                      cutout: '60%'
-                    }}
-                  />
+          <Card className="border-0 h-100" style={{ borderRadius: '14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+            <Card.Header className="bg-white border-0 pt-3 pb-2 px-3" style={{ borderRadius: '14px 14px 0 0' }}>
+              <div className="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div className="d-flex align-items-center gap-2">
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(34,197,94,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <FaUmbrellaBeach size={15} color="#22c55e" />
+                  </div>
+                  <div>
+                    <div className="fw-bold" style={{ fontSize: 14, color: '#111827' }}>Leave Distribution</div>
+                    <div style={{ fontSize: 11, color: '#9ca3af' }}>Annual leave breakdown</div>
+                  </div>
                 </div>
-                <div className="ms-0 ms-md-4 mt-3 mt-md-0 w-100">
-                  {(() => {
-                    const used = parseFloat(leaveBalance.used) || 0;
-                    const pending = parseFloat(leaveBalance.pending) || 0;
-                    const totalAccrued = parseFloat(leaveBalance.total_accrued) || 0;
-                    const available = Math.max(0, totalAccrued - used - pending);
-                    return (
-                      <>
-                        <div className="mb-3">
-                          <small className="text-muted d-block">Used</small>
-                          <strong className="text-danger">{used.toFixed(1)} days</strong>
-                          <ProgressBar now={totalAccrued > 0 ? (used / totalAccrued) * 100 : 0} variant="danger" style={{ height: '4px', maxWidth: '120px' }} />
-                        </div>
-                        <div className="mb-3">
-                          <small className="text-muted d-block">Available</small>
-                          <strong className="text-success">{available.toFixed(1)} days</strong>
-                          <ProgressBar now={totalAccrued > 0 ? (available / totalAccrued) * 100 : 0} variant="success" style={{ height: '4px', maxWidth: '120px' }} />
-                        </div>
-                        <div>
-                          <small className="text-muted d-block">Pending</small>
-                          <strong className="text-warning">{pending.toFixed(1)} days</strong>
-                          <ProgressBar now={totalAccrued > 0 ? (pending / totalAccrued) * 100 : 0} variant="warning" style={{ height: '4px', maxWidth: '120px' }} />
-                        </div>
-                      </>
-                    );
-                  })()}
+                <div style={{
+                  background: 'linear-gradient(135deg,#22c55e,#16a34a)',
+                  color: '#fff', borderRadius: 20, padding: '3px 12px',
+                  fontSize: 12, fontWeight: 700
+                }}>
+                  {parseFloat(leaveBalance.total_accrued || 0).toFixed(1)} days total
                 </div>
               </div>
+            </Card.Header>
+
+            <Card.Body className="p-3 pt-1">
+              {(() => {
+                const used      = parseFloat(leaveBalance.used) || 0;
+                const pending   = parseFloat(leaveBalance.pending) || 0;
+                const total     = parseFloat(leaveBalance.total_accrued) || 0;
+                const available = Math.max(0, total - used - pending);
+                const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(0) : 0;
+
+                const segments = [
+                  { label: 'Leave Used',        value: used,      pct: pct(used),      color: '#ef4444', bg: '#fef2f2', icon: '🔴' },
+                  { label: 'Remaining Leaves',  value: available, pct: pct(available), color: '#22c55e', bg: '#f0fdf4', icon: '🟢' },
+                  { label: 'Pending Approval',  value: pending,   pct: pct(pending),   color: '#f97316', bg: '#fff7ed', icon: '🟠' },
+                ];
+
+                return (
+                  <div className="d-flex flex-column flex-md-row align-items-center gap-3">
+                    {/* Donut chart – bigger & thicker */}
+                    <div style={{ width: 200, height: 200, flexShrink: 0, margin: '0 auto' }}>
+                      <Doughnut
+                        data={leaveChartData}
+                        options={{
+                          responsive: true,
+                          maintainAspectRatio: false,
+                          animation: { duration: 700, easing: 'easeInOutQuart' },
+                          cutout: '52%',
+                          plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                              backgroundColor: 'rgba(17,24,39,0.92)',
+                              titleColor: '#f9fafb',
+                              bodyColor: '#d1d5db',
+                              padding: 10,
+                              cornerRadius: 8,
+                              callbacks: {
+                                label: (ctx) => {
+                                  const v = ctx.raw;
+                                  return total > 0 ? ` ${v} days (${((v/total)*100).toFixed(0)}%)` : ' No data';
+                                }
+                              }
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+
+                    {/* Legend with progress bars */}
+                    <div className="flex-grow-1 w-100">
+                      {segments.map(seg => (
+                        <div key={seg.label} className="mb-3">
+                          <div className="d-flex justify-content-between align-items-center mb-1">
+                            <div className="d-flex align-items-center gap-1">
+                              <span style={{ width: 10, height: 10, borderRadius: '50%', background: seg.color, flexShrink: 0, display: 'inline-block' }} />
+                              <span style={{ fontSize: 12, color: '#374151', fontWeight: 500 }}>{seg.label}</span>
+                            </div>
+                            <div className="d-flex align-items-center gap-2">
+                              <span style={{ fontSize: 13, fontWeight: 700, color: seg.color }}>{seg.value.toFixed(1)}d</span>
+                              <span style={{ fontSize: 11, color: '#9ca3af', background: '#f3f4f6', borderRadius: 10, padding: '1px 6px' }}>{seg.pct}%</span>
+                            </div>
+                          </div>
+                          <div style={{ height: 6, borderRadius: 99, background: '#f3f4f6', overflow: 'hidden' }}>
+                            <div style={{
+                              height: '100%', borderRadius: 99,
+                              background: seg.color,
+                              width: `${Math.max(parseFloat(seg.pct), seg.value > 0 ? 3 : 0)}%`,
+                              transition: 'width 0.7s ease'
+                            }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </Card.Body>
           </Card>
         </Col>

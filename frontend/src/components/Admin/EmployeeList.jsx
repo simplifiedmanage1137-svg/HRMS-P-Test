@@ -422,7 +422,12 @@ const EmployeeList = () => {
               <tbody>
                 {filteredEmployees.length > 0 ? (
                   filteredEmployees.map((emp, index) => (
-                    <tr key={emp.id}>
+                    <tr
+                      key={emp.id}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => navigate(`/admin/employees/${emp.employee_id}`)}
+                      className="align-middle"
+                    >
                       <td className="text-center">{index + 1}</td>
                       <td>
                         <Badge bg="light" text="dark" className="small">
@@ -446,13 +451,13 @@ const EmployeeList = () => {
                       <td className="text-truncate d-none d-xl-table-cell" style={{ maxWidth: '100px' }} title={formatDate(emp.joining_date)}>
                         {formatDate(emp.joining_date)}
                       </td>
-                      <td>
+                      <td onClick={e => e.stopPropagation()}>
                         <div className="d-flex gap-2 gap-md-3 align-items-center justify-content-center flex-wrap">
                           <FaEye
                             size={14}
                             className="text-secondary"
                             style={{ cursor: 'pointer' }}
-                            onClick={() => handleViewProfile(emp)}
+                            onClick={() => navigate(`/admin/employees/${emp.employee_id}`)}
                             title="View Full Profile"
                           />
                           <FaFileAlt

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import loginBg from '../../assets/login.jpg'
 import {
-  FaEnvelope, FaLock, FaEye, FaEyeSlash,
+  FaUser, FaLock, FaEye, FaEyeSlash,
   FaExclamationTriangle, FaCheckCircle
 } from 'react-icons/fa';
 import { Spinner, Modal, Form, Alert, Button } from 'react-bootstrap';
@@ -12,7 +12,7 @@ import axios from '../../config/axios';
 import API_ENDPOINTS from '../../config/api';
 
 const Login = () => {
-  const [email, setEmail]               = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError]               = useState('');
@@ -34,7 +34,7 @@ const Login = () => {
     setError('');
     setLoading(true);
     try {
-      const result = await login(email, password);
+      const result = await login(identifier, password);
       if (result.success) {
         navigate(result.user.role === 'admin' ? '/admin/dashboard' : '/employee/dashboard');
       } else {
@@ -186,16 +186,17 @@ const Login = () => {
           )}
 
           <form onSubmit={handleSubmit}>
-            {/* Email */}
+            {/* Employee ID or Email */}
             <div style={{ marginBottom: '16px', position: 'relative' }}>
-              <FaEnvelope style={{
+              <FaUser style={{
                 position: 'absolute', left: '16px', top: '50%',
                 transform: 'translateY(-50%)', color: '#94A3B8', fontSize: '14px', zIndex: 1,
               }} />
               <input
-                type="email" value={email} required disabled={loading}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="Email address"
+                type="text" value={identifier} required disabled={loading}
+                onChange={e => setIdentifier(e.target.value)}
+                placeholder="Employee ID or Email address"
+                autoComplete="username"
                 style={inputStyle}
                 onFocus={e  => e.target.style.borderColor = '#2563EB'}
                 onBlur={e   => e.target.style.borderColor = '#CBD5E1'}
@@ -233,7 +234,7 @@ const Login = () => {
             <div style={{ textAlign: 'right', marginBottom: '24px' }}>
               <button
                 type="button"
-                onClick={() => { setShowForgotModal(true); setFpEmail(email); setFpError(''); setFpSuccess(''); }}
+                onClick={() => { setShowForgotModal(true); setFpEmail(identifier.includes('@') ? identifier : ''); setFpError(''); setFpSuccess(''); }}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
                   fontSize: '12px', color: '#2563EB', fontWeight: '600',
