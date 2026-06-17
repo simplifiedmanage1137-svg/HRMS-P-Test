@@ -1948,91 +1948,222 @@ const AdminDashboard = () => {
           <Row className="mb-4 g-3">
             {/* Attendance Distribution */}
             <Col xs={12} md={6}>
-              <Card className="border-0 h-100" style={{ borderRadius: '14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
-                <Card.Header className="bg-white border-0 pt-3 pb-2 px-3" style={{ borderRadius: '14px 14px 0 0' }}>
-                  <div className="d-flex align-items-center gap-2">
-                    <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(34,197,94,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <FaUserCheck size={15} color="#22c55e" />
+              <Card className="border-0 h-100" style={{
+                borderRadius: '16px',
+                boxShadow: '0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)',
+                background: '#ffffff',
+                overflow: 'hidden',
+              }}>
+                <Card.Header className="bg-white border-0 px-4 pt-4 pb-0" style={{ borderRadius: '16px 16px 0 0' }}>
+                  <div className="d-flex align-items-center justify-content-between">
+                    <div className="d-flex align-items-center gap-2">
+                      <div style={{
+                        width: 38, height: 38, borderRadius: 10,
+                        background: 'linear-gradient(135deg, rgba(34,197,94,0.15), rgba(22,163,74,0.08))',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: '0 2px 8px rgba(34,197,94,0.2)',
+                      }}>
+                        <FaUserCheck size={16} color="#22c55e" />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', lineHeight: 1.2 }}>
+                          Attendance Distribution
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#9ca3af', marginTop: 2 }}>Today's breakdown</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="fw-bold" style={{ fontSize: 14, color: '#111827' }}>Attendance Distribution</div>
-                      <div style={{ fontSize: 11, color: '#9ca3af' }}>Today’s attendance breakdown</div>
+                    <div style={{
+                      background: '#f0fdf4', border: '1px solid #bbf7d0',
+                      borderRadius: 8, padding: '3px 10px',
+                    }}>
+                      <span style={{ fontSize: 10.5, color: '#16a34a', fontWeight: 600 }}>
+                        {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </span>
                     </div>
                   </div>
                 </Card.Header>
-                <Card.Body className="p-3 pt-1">
+
+                <Card.Body className="px-4 pb-4 pt-3">
                   {(() => {
                     const total = stats.present + stats.absent + stats.onLeave + stats.halfDay + stats.late;
                     const segments = [
-                      { label: 'Present',   value: stats.present,  color: '#22c55e' },
-                      { label: 'Absent',    value: stats.absent,   color: '#ef4444' },
-                      { label: 'On Leave',  value: stats.onLeave,  color: '#8b5cf6' },
-                      { label: 'Half Day',  value: stats.halfDay,  color: '#f97316' },
-                      { label: 'Late',      value: stats.late,     color: '#f59e0b' },
+                      { label: 'Present',  value: stats.present,  color: '#22C55E', bg: '#f0fdf4', border: '#bbf7d0' },
+                      { label: 'Late',     value: stats.late,      color: '#F97316', bg: '#fff7ed', border: '#fed7aa' },
+                      { label: 'Absent',   value: stats.absent,    color: '#EF4444', bg: '#fef2f2', border: '#fecaca' },
+                      { label: 'On Leave', value: stats.onLeave,   color: '#8B5CF6', bg: '#faf5ff', border: '#e9d5ff' },
+                      { label: 'Half Day', value: stats.halfDay,   color: '#EAB308', bg: '#fefce8', border: '#fef08a' },
                     ];
-                    const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(0) : 0;
+                    const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0';
+
+                    const centerPlugin = {
+                      id: 'attCenterText',
+                      beforeDraw(chart) {
+                        const { ctx, chartArea } = chart;
+                        if (!chartArea) return;
+                        const cx = (chartArea.left + chartArea.right) / 2;
+                        const cy = (chartArea.top + chartArea.bottom) / 2;
+                        ctx.save();
+                        ctx.font = 'bold 26px Inter, system-ui, sans-serif';
+                        ctx.fillStyle = '#111827';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(String(total), cx, cy - 10);
+                        ctx.font = '500 9.5px Inter, system-ui, sans-serif';
+                        ctx.fillStyle = '#9ca3af';
+                        ctx.fillText("Today's", cx, cy + 8);
+                        ctx.fillText('Attendance', cx, cy + 20);
+                        ctx.restore();
+                      },
+                    };
+
+                    const chartData = {
+                      labels: segments.map(s => s.label),
+                      datasets: [{
+                        data: segments.map(s => s.value),
+                        backgroundColor: segments.map(s => s.color),
+                        borderWidth: 3,
+                        borderColor: '#ffffff',
+                        hoverBorderColor: '#ffffff',
+                        hoverBorderWidth: 4,
+                        hoverOffset: 14,
+                      }],
+                    };
+
+                    const emptyData = {
+                      labels: ['No data'],
+                      datasets: [{
+                        data: [1],
+                        backgroundColor: ['#f3f4f6'],
+                        borderWidth: 0,
+                        hoverOffset: 0,
+                      }],
+                    };
+
                     return (
-                      <div className="d-flex flex-column flex-sm-row align-items-center gap-3">
-                        <div style={{ width: 180, height: 180, flexShrink: 0, margin: '0 auto' }}>
-                          <Doughnut
-                            data={attendanceChartData}
-                            options={{
-                              responsive: true,
-                              maintainAspectRatio: false,
-                              animation: { duration: 700, easing: 'easeInOutQuart' },
-                              cutout: '52%',
-                              plugins: {
-                                legend: { display: false },
-                                tooltip: {
-                                  backgroundColor: 'rgba(17,24,39,0.92)',
-                                  titleColor: '#f9fafb',
-                                  bodyColor: '#d1d5db',
-                                  padding: 10,
-                                  cornerRadius: 8,
-                                  callbacks: {
-                                    label: (ctx) => total > 0
-                                      ? ` ${ctx.raw} employees (${((ctx.raw/total)*100).toFixed(0)}%)`
-                                      : ' No data'
-                                  }
-                                }
-                              }
-                            }}
-                          />
+                      <>
+                        {/* Donut chart centred */}
+                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+                          <div style={{ width: 220, height: 220 }}>
+                            <Doughnut
+                              data={total > 0 ? chartData : emptyData}
+                              options={{
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                animation: {
+                                  duration: 1000,
+                                  easing: 'easeInOutQuart',
+                                  animateRotate: true,
+                                  animateScale: false,
+                                },
+                                cutout: '55%',
+                                plugins: {
+                                  legend: { display: false },
+                                  tooltip: total > 0 ? {
+                                    backgroundColor: 'rgba(15,23,42,0.93)',
+                                    titleColor: '#f8fafc',
+                                    bodyColor: '#cbd5e1',
+                                    borderColor: 'rgba(255,255,255,0.08)',
+                                    borderWidth: 1,
+                                    padding: { top: 10, bottom: 10, left: 14, right: 14 },
+                                    cornerRadius: 10,
+                                    displayColors: true,
+                                    boxWidth: 8,
+                                    boxHeight: 8,
+                                    boxPadding: 5,
+                                    callbacks: {
+                                      title: (items) => items[0]?.label,
+                                      label: (ctx) =>
+                                           employees · %,
+                                    },
+                                  } : { enabled: false },
+                                },
+                                elements: {
+                                  arc: { borderRadius: 4 },
+                                },
+                              }}
+                              plugins={total > 0 ? [centerPlugin] : []}
+                            />
+                          </div>
                         </div>
-                        <div className="flex-grow-1 w-100">
+
+                        {/* Badge-style legend grid */}
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 1fr',
+                          gap: 8,
+                          marginBottom: 14,
+                        }}>
                           {segments.map(seg => (
-                            <div key={seg.label} className="mb-2">
-                              <div className="d-flex justify-content-between align-items-center mb-1">
-                                <div className="d-flex align-items-center gap-1">
-                                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: seg.color, display: 'inline-block', flexShrink: 0 }} />
-                                  <span style={{ fontSize: 12, color: '#374151', fontWeight: 500 }}>{seg.label}</span>
+                            <div
+                              key={seg.label}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 10,
+                                padding: '10px 12px',
+                                background: seg.bg,
+                                borderRadius: 10,
+                                border: 1px solid ,
+                                cursor: 'default',
+                                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                              }}
+                              onMouseEnter={e => {
+                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                e.currentTarget.style.boxShadow =   6px 16px 20;
+                              }}
+                              onMouseLeave={e => {
+                                e.currentTarget.style.transform = 'translateY(0)';
+                                e.currentTarget.style.boxShadow = 'none';
+                              }}
+                            >
+                              <div style={{
+                                width: 10, height: 10, borderRadius: '50%',
+                                background: seg.color, flexShrink: 0,
+                                boxShadow:   0 0 3px 30,
+                              }} />
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 10.5, color: '#6b7280', fontWeight: 500 }}>
+                                  {seg.label}
                                 </div>
-                                <div className="d-flex align-items-center gap-2">
-                                  <span style={{ fontSize: 13, fontWeight: 700, color: seg.color }}>{seg.value}</span>
-                                  <span style={{ fontSize: 11, color: '#9ca3af', background: '#f3f4f6', borderRadius: 10, padding: '1px 6px' }}>{pct(seg.value)}%</span>
-                                </div>
-                              </div>
-                              <div style={{ height: 5, borderRadius: 99, background: '#f3f4f6', overflow: 'hidden' }}>
                                 <div style={{
-                                  height: '100%', borderRadius: 99, background: seg.color,
-                                  width: `${Math.max(parseFloat(pct(seg.value)), seg.value > 0 ? 3 : 0)}%`,
-                                  transition: 'width 0.7s ease'
-                                }} />
+                                  display: 'flex', alignItems: 'baseline', gap: 4, marginTop: 1,
+                                }}>
+                                  <span style={{
+                                    fontSize: 18, fontWeight: 700, color: '#111827', lineHeight: 1,
+                                  }}>
+                                    {seg.value}
+                                  </span>
+                                  <span style={{ fontSize: 11, fontWeight: 600, color: seg.color }}>
+                                    {pct(seg.value)}%
+                                  </span>
+                                </div>
                               </div>
                             </div>
                           ))}
-                          <div className="mt-2 pt-2" style={{ borderTop: '1px solid #f3f4f6' }}>
-                            <span style={{ fontSize: 11, color: '#6b7280' }}>Total employees tracked: </span>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{totalEmployees}</span>
-                          </div>
                         </div>
-                      </div>
+
+                        {/* Footer: total employees */}
+                        <div style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '10px 16px',
+                          background: 'linear-gradient(135deg, #f8fafc, #f1f5f9)',
+                          borderRadius: 10,
+                          border: '1px solid #e2e8f0',
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                            <FaUsers size={12} color="#64748b" />
+                            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                              Total Employees Tracked
+                            </span>
+                          </div>
+                          <span style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>
+                            {totalEmployees}
+                          </span>
+                        </div>
+                      </>
                     );
                   })()}
                 </Card.Body>
               </Card>
             </Col>
-
             {/* Department Distribution */}
             <Col xs={12} md={6}>
               <Card className="border-0 h-100" style={{ borderRadius: '14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
