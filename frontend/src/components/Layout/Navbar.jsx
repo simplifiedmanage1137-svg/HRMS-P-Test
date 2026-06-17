@@ -33,6 +33,9 @@ const ROUTE_LABELS = {
   '/admin/teams':                'Teams',
 };
 
+const DEFAULT_TICKER =
+  'Welcome to B2B InDemand HRMS  ·  Track Attendance  ·  Apply & Approve Leaves  ·  View Salary Slips  ·  Performance Ratings  ·  Team Management  ·  Regularize Attendance  ·  Comp-Off Tracking';
+
 const Navbar = () => {
   const { user, logout }   = useAuth();
   const navigate           = useNavigate();
@@ -210,7 +213,15 @@ const Navbar = () => {
   const noticeBg     = activeNotice?.background_color || 'var(--navbar-bg)';
   const noticeColor  = activeNotice?.text_color || '#2B2B2B';
 
-  // ─────────────────────────────────────────────────────────────
+  const tickerText   = activeNotice ? activeNotice.message : DEFAULT_TICKER;
+  const tickerColor  = activeNotice ? noticeColor : 'var(--text-secondary)';
+  const pillBg       = activeNotice ? 'rgba(0,0,0,0.10)' : 'rgba(37,99,235,0.08)';
+  const pillColor    = activeNotice ? noticeColor : 'var(--primary)';
+  const pillLabel    = activeNotice ? 'Notice' : 'Info';
+  const scrollAnim   = activeNotice?.direction === 'left_to_right'
+    ? 'noticeScrollLTR 35s linear infinite'
+    : 'noticeScrollRTL 35s linear infinite';
+
   return (
     <nav
       style={{
@@ -228,7 +239,7 @@ const Navbar = () => {
         transition: 'background 0.35s ease',
       }}
     >
-      {/* ── LEFT: page title ── */}
+      {/* LEFT: page title */}
       <div style={{ flexShrink: 0 }}>
         <div style={{
           fontSize: '11px', fontWeight: 400, lineHeight: 1,
@@ -244,85 +255,70 @@ const Navbar = () => {
         </div>
       </div>
 
-      {/* ── CENTRE: notice message ── */}
-      {activeNotice ? (
+      {/* CENTRE: always-visible scrolling ticker */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        overflow: 'hidden',
+        padding: '0 20px',
+      }}>
+        {/* label pill */}
         <div style={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          overflow: 'hidden',
-          padding: '0 20px',
+          display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
+          background: pillBg, borderRadius: '20px', padding: '3px 9px 3px 7px',
         }}>
-          {/* label pill */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
-            background: 'rgba(0,0,0,0.10)', borderRadius: '20px',
-            padding: '3px 9px 3px 7px',
+          <FaBullhorn size={9} style={{ color: pillColor }} />
+          <span style={{
+            fontSize: '11px', fontWeight: '700', letterSpacing: '0.5px',
+            color: pillColor, textTransform: 'uppercase',
           }}>
-            <FaBullhorn size={9} style={{ color: noticeColor }} />
-            <span style={{
-              fontSize: '15px', fontWeight: '700', letterSpacing: '0.5px',
-              color: noticeColor, textTransform: 'uppercase',
-            }}>Notice</span>
-          </div>
-
-          {/* divider */}
-          <div style={{ width: '1px', height: '14px', background: 'rgba(0,0,0,0.18)', flexShrink: 0 }} />
-
-          {/* message */}
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            {activeNotice.display_type === 'static' ? (
-              <span style={{
-                fontSize: '13px', color: noticeColor,
-                fontStyle: noticeItalic ? 'italic' : 'normal',
-                fontWeight: noticeBold ? '700' : '500',
-              }}>
-                {activeNotice.message}
-              </span>
-            ) : (
-              <div
-                style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
-                onMouseEnter={() => setNoticePaused(true)}
-                onMouseLeave={() => setNoticePaused(false)}
-              >
-                {/*
-                  Two identical halves inside an inline-flex wrapper.
-                  Each half = message repeated 5× with a separator.
-                  Animation moves -50% of the wrapper's own width = one half,
-                  so the second half seamlessly takes the first half's position.
-                */}
-                <div style={{
-                  display: 'inline-flex',
-                  animation: noticePaused ? 'none'
-                    : activeNotice.direction === 'left_to_right'
-                      ? 'noticeScrollLTR 30s linear infinite'
-                      : 'noticeScrollRTL 30s linear infinite',
-                }}>
-                  {[0, 1].map(half => (
-                    <span key={half} style={{
-                      display: 'inline-block',
-                      whiteSpace: 'nowrap',
-                      paddingRight: '4em',
-                      fontSize: '19px',
-                      color: noticeColor,
-                      fontStyle: noticeItalic ? 'italic' : 'normal',
-                      fontWeight: noticeBold ? '700' : '500',
-                    }}>
-                      {Array(5).fill(activeNotice.message).join('    ·    ')}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+            {pillLabel}
+          </span>
         </div>
-      ) : (
-        /* spacer when no notice so right controls stay right */
-        <div style={{ flex: 1 }} />
-      )}
 
-      {/* ── RIGHT: datetime + bell + profile ── */}
+        {/* divider */}
+        <div style={{ width: '1px', height: '14px', background: 'rgba(0,0,0,0.12)', flexShrink: 0 }} />
+
+        {/* scrolling text — always shown */}
+        {activeNotice && activeNotice.display_type === 'static' ? (
+          <span style={{
+            fontSize: '13px', color: tickerColor,
+            fontStyle: noticeItalic ? 'italic' : 'normal',
+            fontWeight: noticeBold ? '700' : '500',
+          }}>
+            {tickerText}
+          </span>
+        ) : (
+          <div
+            style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' }}
+            onMouseEnter={() => setNoticePaused(true)}
+            onMouseLeave={() => setNoticePaused(false)}
+          >
+            <div style={{
+              display: 'inline-flex',
+              animation: noticePaused ? 'none' : scrollAnim,
+            }}>
+              {[0, 1].map(half => (
+                <span key={half} style={{
+                  display: 'inline-block',
+                  whiteSpace: 'nowrap',
+                  paddingRight: '4em',
+                  fontSize: '13px',
+                  color: tickerColor,
+                  fontStyle: noticeItalic ? 'italic' : 'normal',
+                  fontWeight: noticeBold ? '700' : '500',
+                }}>
+                  {Array(5).fill(tickerText).join('     ·     ')}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* RIGHT: datetime + bell + profile */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
 
         {/* DateTime pill */}
@@ -438,7 +434,7 @@ const Navbar = () => {
 
       </div>
 
-      {/* ── NOTIFICATION PANEL (absolute) ── */}
+      {/* NOTIFICATION PANEL (absolute) */}
       {showNotifications && (
         <div
           ref={notificationRef}
@@ -501,7 +497,7 @@ const Navbar = () => {
             {eventNotifications.filter(e => !e.read).length > 0 && (
               <div style={{ marginBottom: '6px' }}>
                 <div style={{ fontSize: '10.5px', fontWeight: '600', color: 'var(--text-muted)', padding: '4px 4px 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  🎉 Today's Events
+                  Today's Events
                 </div>
                 {eventNotifications.filter(e => !e.read).map(event => (
                   <div key={event.id} style={{ position: 'relative', marginBottom: '4px' }}>
@@ -518,7 +514,7 @@ const Navbar = () => {
             {notifications.length > 0 ? (
               <div>
                 <div style={{ fontSize: '10.5px', fontWeight: '600', color: 'var(--text-muted)', padding: '4px 4px 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  🔔 Updates
+                  Updates
                 </div>
                 {notifications.map(notif => (
                   <div
