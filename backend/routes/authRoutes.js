@@ -6,7 +6,11 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || JWT_SECRET + '_refresh';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || (JWT_SECRET ? JWT_SECRET + '_refresh' : undefined);
+
+if (!JWT_SECRET) {
+    console.error('🚨 FATAL: JWT_SECRET environment variable is not set. Auth routes will not work.');
+}
 const ACCESS_TOKEN_EXPIRY = '15m';
 const REFRESH_TOKEN_EXPIRY = '7d';
 
@@ -156,7 +160,19 @@ router.post('/refresh', async (req, res) => {
             return res.json({ success: true, token: newAccess, refreshToken: newRefresh });
         }
 
-        const { data, error } = await supabase.from('employees').select('id, email, role, employee_id, first_name, last_name, department, designation, profile_image, is_active').eq('id', decoded.id).maybeSingle();
+        let data, error;
+        try {
+            const result = await supabase
+                .from('employees')
+                .select('id, email, role, employee_id, first_name, last_name, department, designation, profile_image, is_active')
+                .eq('id', decoded.id)
+                .maybeSingle();
+            data = result.data;
+            error = result.error;
+        } catch (supabaseThrow) {
+            console.error('❌ [REFRESH] Supabase threw unexpectedly:', supabaseThrow.message);
+            return res.status(503).json({ success: false, message: 'Database unavailable' });
+        }
         if (error || !data) return res.status(401).json({ success: false, message: 'User not found' });
         if (data.is_active === false) return res.status(403).json({ success: false, message: 'Account deactivated' });
 
@@ -182,14 +198,21 @@ router.post('/refresh', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Refresh error:', error);
-        res.status(500).json({ success: false, message: 'Server error' });
+        console.error('❌ [REFRESH] Unhandled error — name:', error.name, '| message:', error.message);
+        console.error('❌ [REFRESH] Stack:', error.stack);
+        if (res.headersSent) return;
+        return res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 
 // Verify token & return fresh user data
 router.post('/verify', async (req, res) => {
     try {
+        if (!JWT_SECRET) {
+            console.error('❌ [VERIFY] JWT_SECRET is not set — cannot verify token');
+            return res.status(500).json({ success: false, message: 'Server configuration error', code: 'MISSING_SECRET' });
+        }
+
         const token = req.headers['authorization']?.split(' ')[1];
         if (!token) return res.status(401).json({ success: false, message: 'No token provided', code: 'NO_TOKEN' });
 
@@ -205,12 +228,33 @@ router.post('/verify', async (req, res) => {
             return res.json({ success: true, user: { id: decoded.id, email: decoded.email, role: 'admin', employeeId: 'HR001', firstName: 'HR', lastName: 'Admin' } });
         }
 
-        const { data: user, error } = await supabase.from('employees').select('id, email, role, employee_id, first_name, last_name, department, designation, profile_image, is_active').eq('id', decoded.id).maybeSingle();
+        if (!decoded.id) {
+            console.error('❌ [VERIFY] Token payload missing id field:', JSON.stringify(decoded));
+            return res.status(401).json({ success: false, message: 'Invalid token payload', code: 'INVALID_TOKEN' });
+        }
 
-        if (error || !user) return res.status(401).json({ success: false, message: 'User not found', code: 'USER_NOT_FOUND' });
+        let user, dbError;
+        try {
+            const result = await supabase
+                .from('employees')
+                .select('id, email, role, employee_id, first_name, last_name, department, designation, profile_image, is_active')
+                .eq('id', decoded.id)
+                .maybeSingle();
+            user = result.data;
+            dbError = result.error;
+        } catch (supabaseThrow) {
+            console.error('❌ [VERIFY] Supabase threw unexpectedly:', supabaseThrow.message, supabaseThrow.stack);
+            return res.status(503).json({ success: false, message: 'Database unavailable', code: 'DB_ERROR' });
+        }
+
+        if (dbError) {
+            console.error('❌ [VERIFY] Supabase query error:', dbError.message, 'code:', dbError.code);
+            return res.status(401).json({ success: false, message: 'User not found', code: 'USER_NOT_FOUND' });
+        }
+        if (!user) return res.status(401).json({ success: false, message: 'User not found', code: 'USER_NOT_FOUND' });
         if (user.is_active === false) return res.status(403).json({ success: false, message: 'Account deactivated' });
 
-        res.json({
+        return res.json({
             success: true,
             user: {
                 id: user.id,
@@ -226,8 +270,13 @@ router.post('/verify', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Verify error:', error);
-        res.status(500).json({ success: false, message: 'Server error' });
+        console.error('❌ [VERIFY] Unhandled error — name:', error.name, '| message:', error.message);
+        console.error('❌ [VERIFY] Stack:', error.stack);
+        if (res.headersSent) {
+            console.error('❌ [VERIFY] Headers already sent — cannot send 500 response');
+            return;
+        }
+        return res.status(500).json({ success: false, message: 'Server error', code: 'INTERNAL_ERROR' });
     }
 });
 

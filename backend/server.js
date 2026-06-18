@@ -294,15 +294,26 @@ app.use((req, res) => {
 // Must have 4 parameters for Express to treat it as an error handler.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-    console.error('❌ Unhandled error:', err.message);
+    // Always log full stack — visible in Render logs regardless of environment
+    console.error(`❌ [GLOBAL ERROR] ${req.method} ${req.path}`);
+    console.error(`   name   : ${err.name}`);
+    console.error(`   message: ${err.message}`);
+    console.error(`   stack  :\n${err.stack}`);
 
     if (isProduction) {
-        const logDir = path.join(__dirname, 'logs');
-        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-        fs.appendFileSync(
-            path.join(logDir, 'errors.log'),
-            `${new Date().toISOString()} — ${err.stack}\n`
-        );
+        try {
+            const logDir = path.join(__dirname, 'logs');
+            if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+            fs.appendFileSync(
+                path.join(logDir, 'errors.log'),
+                `${new Date().toISOString()} ${req.method} ${req.path} — ${err.stack}\n`
+            );
+        } catch (_) { /* log write failure must not mask the original error */ }
+    }
+
+    if (res.headersSent) {
+        console.error('❌ [GLOBAL ERROR] Headers already sent — cannot send error response');
+        return;
     }
 
     if (err instanceof multer.MulterError) {
